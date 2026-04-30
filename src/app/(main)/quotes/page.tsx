@@ -6,11 +6,10 @@ import Link from 'next/link'
 import { Plus, Trash2 } from 'lucide-react'
 import { formatKRW } from '@/lib/utils'
 
-const STATUS_LABEL: Record<string, string> = { draft: '작성중', confirmed: '확정', executed: '실행' }
+const STATUS_LABEL: Record<string, string> = { '작성중': '작성중', '배포완료': '배포완료' }
 const STATUS_COLOR: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600',
-  confirmed: 'bg-blue-100 text-blue-700',
-  executed: 'bg-emerald-100 text-emerald-700',
+  '작성중': 'bg-blue-100 text-blue-700',
+  '배포완료': 'bg-green-100 text-green-700',
 }
 
 export default function QuotesPage() {
@@ -77,7 +76,17 @@ export default function QuotesPage() {
                   {q.total_profit_rate}%
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOR[q.status]}`}>{STATUS_LABEL[q.status]}</span>
+                  <div className="flex items-center gap-2">
+                    {q.quote_number && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
+                        {q.quote_number}
+                      </span>
+                    )}
+                    {q.status === '배포완료'
+                      ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">배포완료</span>
+                      : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">작성중</span>
+                    }
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
