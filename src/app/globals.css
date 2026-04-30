@@ -1,26 +1,60 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+body {
+  background: #f9fafb;
+  color: #111827;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* 인쇄 전용 - 화면에서 숨김 */
+.print-only {
+  display: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@media print {
+  .print-only {
+    display: block !important;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* 고객용 출력 - 내부 정보 숨김 */
+.print-client .internal-only {
+  display: none !important;
+}
+.print-client .client-quote-col {
+  display: table-cell !important;
+}
+
+@media print {
+  /* 고객용 출력 시 내부 컬럼 숨김 */
+  .print-client .internal-only {
+    display: none !important;
+  }
+  /* 사이드바, 버튼 숨기기 */
+  nav, aside, [class*="Sidebar"],
+  button, a[href] {
+    display: none !important;
+  }
+
+  /* 본문 전체 너비로 */
+  main, .main-content, [class*="p-8"] {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  /* 페이지 여백 */
+  @page {
+    margin: 15mm;
+    size: A4 landscape;
+  }
+
+  /* 테이블 깨짐 방지 */
+  table { page-break-inside: avoid; }
+  tr { page-break-inside: avoid; }
+
+  /* 색상 유지 */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }

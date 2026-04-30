@@ -1,0 +1,1 @@
+ALTER TABLE quote_templates ADD COLUMN IF NOT EXISTS comment TEXT DEFAULT '';
