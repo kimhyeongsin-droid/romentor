@@ -46,6 +46,11 @@ export interface Project {
   area_sqm: number
   manager_name: string
   manager_phone: string
+  designer_name?: string
+  designer_phone?: string
+  site_manager_name?: string
+  site_manager_phone?: string
+  note?: string
   status: 'draft' | 'active' | 'completed'
   created_at: string
   updated_at: string

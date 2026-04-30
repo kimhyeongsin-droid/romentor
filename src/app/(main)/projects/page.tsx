@@ -56,29 +56,41 @@ export default function ProjectsPage() {
           </div>
         )}
         {projects.map((p) => (
-          <div key={p.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex items-center justify-between hover:shadow-md transition-shadow">
-            <div className="flex items-center gap-4">
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <Building2 size={20} className="text-blue-600" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold text-gray-900">{p.name}</p>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOR[p.status]}`}>{STATUS_LABEL[p.status]}</span>
+          <div key={p.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition-shadow">
+            <div className="flex items-start justify-between">
+              <div className="flex items-start gap-4">
+                <div className="bg-blue-50 p-3 rounded-lg flex-shrink-0">
+                  <Building2 size={20} className="text-blue-600" />
                 </div>
-                <p className="text-sm text-gray-500 mt-0.5">{p.client_name} · {p.address}</p>
-                <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
-                  <Phone size={12} /> {p.manager_name} {p.manager_phone}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-gray-900">{p.name}</h3>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLOR[p.status]}`}>{STATUS_LABEL[p.status]}</span>
+                  </div>
+                  {p.address && (
+                    <p className="text-xs text-gray-400 mt-0.5">{p.address}</p>
+                  )}
+                  <div className="flex flex-wrap gap-4 mt-2">
+                    {p.manager_name && (
+                      <span className="text-xs text-gray-500">PM: <span className="font-medium text-gray-700">{p.manager_name}</span></span>
+                    )}
+                    {p.designer_name && (
+                      <span className="text-xs text-gray-500">디자이너: <span className="font-medium text-gray-700">{p.designer_name}</span></span>
+                    )}
+                    {p.site_manager_name && (
+                      <span className="text-xs text-gray-500">소장: <span className="font-medium text-gray-700">{p.site_manager_name}</span></span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <Link href={`/quotes/new?projectId=${p.id}`} className="text-sm px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-medium">견적 작성</Link>
-              <Link href={`/projects/${p.id}`} className="text-sm px-3 py-1.5 rounded-lg bg-gray-50 text-gray-700 hover:bg-gray-100 font-medium">상세보기</Link>
-              <button onClick={() => deleteProject(p.id, p.name)} disabled={deleting === p.id}
-                className="text-sm px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-medium disabled:opacity-40">
-                {deleting === p.id ? '삭제중...' : <Trash2 size={14} />}
-              </button>
+              <div className="flex gap-2 flex-shrink-0 ml-4">
+                <Link href={`/quotes/new?projectId=${p.id}`} className="text-sm px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-medium">견적 작성</Link>
+                <Link href={`/projects/${p.id}`} className="text-sm px-3 py-1.5 rounded-lg bg-gray-50 text-gray-700 hover:bg-gray-100 font-medium">상세보기</Link>
+                <button onClick={() => deleteProject(p.id, p.name)} disabled={deleting === p.id}
+                  className="text-sm px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-medium disabled:opacity-40">
+                  {deleting === p.id ? '삭제중...' : <Trash2 size={14} />}
+                </button>
+              </div>
             </div>
           </div>
         ))}

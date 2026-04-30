@@ -1,11 +1,14 @@
 'use client'
 
-import React, { useCallback, useEffect, useState, Suspense } from 'react'
+import React, { useCallback, useEffect, useRef, useState, Suspense } from 'react'
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { generateQuoteNumber } from '@/lib/utils'
 import { WORK_TYPE_COLOR } from '@/types'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Plus, Trash2, GripVertical } from 'lucide-react'
 
 const SIZE_CATEGORIES = ['20평대','30평대','40평대','50평대','60평대','70평대','80평대','90평대','100평대이상']
 
@@ -16,7 +19,7 @@ const WORK_ORDER = [
 ]
 
 interface QuoteItem {
-  id: string
+  tempId: string
   work_type: string
   item_name: string
   comment: string
@@ -33,6 +36,102 @@ const fmt = (n: number) => n.toLocaleString()
 function colorOf(wt: string) {
   return (WORK_TYPE_COLOR as Record<string, string>)[wt] ?? 'bg-gray-100 text-gray-600'
 }
+
+function autoResizeNew(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = el.scrollHeight + 'px'
+}
+
+interface SortableQuoteRowProps {
+  item: QuoteItem
+  upd: (tempId: string, key: keyof QuoteItem, value: any) => void
+  del: (tempId: string) => void
+  addItemAt: (workType: string, afterTempId: string) => void
+}
+
+const SortableQuoteRow = React.memo(function SortableQuoteRow({ item, upd, del, addItemAt }: SortableQuoteRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.tempId })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
+  const itemNameRef = useRef<HTMLTextAreaElement>(null)
+  const commentRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (itemNameRef.current) autoResizeNew(itemNameRef.current)
+    if (commentRef.current) autoResizeNew(commentRef.current)
+  }, [item.item_name, item.comment])
+
+  const mat = item.material_unit_price * item.quantity
+  const lab = item.labor_unit_price * item.quantity
+
+  return (
+    <tr ref={setNodeRef} style={style} className="group hover:bg-gray-50">
+      <td className="px-3 py-1.5 align-top flex items-start gap-1">
+        <span {...attributes} {...listeners}
+          className="flex-shrink-0 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 mt-1">
+          <GripVertical size={12} />
+        </span>
+        <button
+          onClick={e => { e.stopPropagation(); addItemAt(item.work_type, item.tempId) }}
+          className="flex-shrink-0 text-gray-200 hover:text-blue-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          title="아래에 항목 추가"
+        >
+          <Plus size={12} />
+        </button>
+        <textarea ref={itemNameRef} value={item.item_name}
+          onChange={e => { upd(item.tempId, 'item_name', e.target.value); autoResizeNew(e.target) }}
+          onFocus={e => autoResizeNew(e.target)}
+          rows={1}
+          className="w-full text-xs font-medium text-gray-800 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white resize-none overflow-hidden leading-relaxed" />
+      </td>
+      <td className="px-3 py-1.5 align-top">
+        <textarea ref={commentRef} value={item.comment ?? ''}
+          onChange={e => { upd(item.tempId, 'comment', e.target.value); autoResizeNew(e.target) }}
+          onFocus={e => autoResizeNew(e.target)}
+          placeholder="Comment"
+          rows={1}
+          className="w-full text-xs text-gray-400 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white resize-none overflow-hidden leading-relaxed" />
+      </td>
+      <td className="px-3 py-1.5">
+        <input value={item.unit}
+          onChange={e => upd(item.tempId, 'unit', e.target.value)}
+          className="w-full text-xs text-gray-500 text-center border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1 py-1 focus:outline-none bg-transparent focus:bg-white" />
+      </td>
+      <td className="px-3 py-1.5">
+        <input type="text" value={String(item.quantity)}
+          onFocus={e => e.target.select()}
+          onChange={e => upd(item.tempId, 'quantity', Number(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+          className={`w-full text-xs text-right border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white ${item.quantity === 0 ? 'text-red-400' : 'text-gray-700'}`} />
+      </td>
+      <td className="px-3 py-1.5">
+        <input type="text" value={String(item.material_unit_price)}
+          onFocus={e => e.target.select()}
+          onChange={e => upd(item.tempId, 'material_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
+          className="w-full text-xs text-right text-blue-700 font-medium border border-transparent hover:border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
+      </td>
+      <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 bg-blue-50/40">{mat.toLocaleString()}</td>
+      <td className="px-3 py-1.5">
+        <input type="text" value={String(item.labor_unit_price)}
+          onFocus={e => e.target.select()}
+          onChange={e => upd(item.tempId, 'labor_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
+          className="w-full text-xs text-right text-amber-700 font-medium border border-transparent hover:border-amber-200 focus:border-amber-400 focus:ring-1 focus:ring-amber-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
+      </td>
+      <td className="px-3 py-1.5 text-right text-xs font-semibold text-amber-700 bg-amber-50/40">{lab.toLocaleString()}</td>
+      <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-600">{(item.material_unit_price + item.labor_unit_price).toLocaleString()}</td>
+      <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700">{(mat + lab).toLocaleString()}</td>
+      <td className="px-3 py-1.5">
+        <input value={item.note ?? ''}
+          onChange={e => upd(item.tempId, 'note', e.target.value)}
+          placeholder="비고"
+          className="w-full text-xs text-gray-400 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
+      </td>
+      <td className="sticky right-0 w-8 px-2 py-1.5 bg-white group-hover:bg-gray-50">
+        <button onClick={() => del(item.tempId)} className="text-gray-200 hover:text-red-500 p-1">
+          <Trash2 size={12} />
+        </button>
+      </td>
+    </tr>
+  )
+})
 
 function NewQuoteForm() {
   const router = useRouter()
@@ -54,6 +153,8 @@ function NewQuoteForm() {
     profit: 15,
     vat: 10,
   })
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
   useEffect(() => {
     createClient()
@@ -105,8 +206,8 @@ function NewQuoteForm() {
       if (b.work_type === '설계비용') return 1
       return (WORK_ORDER.indexOf(a.work_type) - WORK_ORDER.indexOf(b.work_type)) || (a.sort_order - b.sort_order)
     })
-    setItems(sorted.map((t: any) => ({
-      id: t.id,
+    setItems(sorted.map((t: any, idx: number) => ({
+      tempId: `tmp_${t.id}_${idx}`,
       work_type: t.work_type,
       item_name: t.item_name,
       comment: t.comment ?? '',
@@ -119,8 +220,79 @@ function NewQuoteForm() {
     })))
   }
 
-  const updateItem = useCallback((id: string, key: keyof QuoteItem, value: any) => {
-    setItems(prev => prev.map(i => i.id === id ? { ...i, [key]: value } : i))
+  const updateItem = useCallback((tempId: string, key: keyof QuoteItem, value: any) => {
+    setItems(prev => prev.map(i => i.tempId === tempId ? { ...i, [key]: value } : i))
+  }, [])
+
+  const deleteItem = useCallback((tempId: string) => {
+    setItems(prev => prev.filter(i => i.tempId !== tempId))
+  }, [])
+
+  const addItem = useCallback((workType: string) => {
+    const newItem: QuoteItem = {
+      tempId: `tmp_${Date.now()}_${Math.random()}`,
+      work_type: workType,
+      item_name: '새 항목',
+      comment: '',
+      unit: '식',
+      quantity: 1,
+      material_unit_price: 0,
+      labor_unit_price: 0,
+      note: '',
+      sort_order: 0,
+    }
+    setItems(prev => {
+      const idx = prev.findLastIndex(i => i.work_type === workType)
+      if (idx === -1) return [...prev, newItem]
+      const next = [...prev]
+      next.splice(idx + 1, 0, newItem)
+      return next
+    })
+  }, [])
+
+  const addItemAt = useCallback((workType: string, afterTempId: string) => {
+    const newItem: QuoteItem = {
+      tempId: `tmp_${Date.now()}_${Math.random()}`,
+      work_type: workType,
+      item_name: '새 항목',
+      comment: '',
+      unit: '식',
+      quantity: 1,
+      material_unit_price: 0,
+      labor_unit_price: 0,
+      note: '',
+      sort_order: 0,
+    }
+    setItems(prev => {
+      const idx = prev.findIndex(i => i.tempId === afterTempId)
+      if (idx === -1) return [...prev, newItem]
+      const next = [...prev]
+      next.splice(idx + 1, 0, newItem)
+      return next
+    })
+  }, [])
+
+  const handleDragEnd = useCallback((event: any) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setItems(prev => {
+      const dragItem = prev.find(i => i.tempId === active.id)
+      const overItem = prev.find(i => i.tempId === over.id)
+      if (!dragItem || !overItem || dragItem.work_type !== overItem.work_type) return prev
+      const wtItems = prev.filter(i => i.work_type === dragItem.work_type)
+      const oldIdx = wtItems.findIndex(i => i.tempId === active.id)
+      const newIdx = wtItems.findIndex(i => i.tempId === over.id)
+      const reordered = arrayMove(wtItems, oldIdx, newIdx)
+      const result: QuoteItem[] = []
+      WORK_ORDER.forEach(wt => {
+        const wtGroup = wt === dragItem.work_type
+          ? reordered
+          : prev.filter(i => i.work_type === wt)
+        result.push(...wtGroup)
+      })
+      const remaining = prev.filter(i => !WORK_ORDER.includes(i.work_type as any))
+      return [...result, ...remaining]
+    })
   }, [])
 
   const applyAutoCalc = () => {
@@ -370,96 +542,70 @@ function NewQuoteForm() {
           <p className="text-gray-400">평형대를 선택하고 <strong>기본 포맷 불러오기</strong>를 클릭하세요.</p>
         </div>
       ) : (
-        <div className="space-y-4 mb-6">
-          {allGrouped.map(({ wt, items: gItems }) => (
-            <div key={wt} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="px-5 py-2.5 flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${colorOf(wt)}`}>{wt}</span>
-                <span className="text-xs text-gray-400">{gItems.length}개</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[900px]">
-                  <thead className="bg-gray-50 border-b border-gray-100">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-48">항목명</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-56">Comment</th>
-                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 w-12">단위</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-16">수량</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-blue-500 w-28">재료단가</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-blue-600 w-24 bg-blue-50">재료금액</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-amber-500 w-28">노무단가</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-amber-600 w-24 bg-amber-50">노무금액</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-24">합계단가</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 w-24">합계금액</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-32">비고</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {gItems.map(item => (
-                      <tr key={item.id} className={item.quantity === 0 ? 'opacity-40 bg-gray-50' : 'hover:bg-gray-50'}>
-                        <td className="px-3 py-1.5 text-xs font-medium text-gray-800 whitespace-pre-wrap">{item.item_name}</td>
-                        <td className="px-3 py-1.5 text-xs text-gray-400 whitespace-pre-wrap">{item.comment}</td>
-                        <td className="px-3 py-1.5 text-xs text-gray-500 text-center">{item.unit}</td>
-                        <td className="px-3 py-1.5">
-                          <input type="text" value={item.quantity === 0 ? '0' : String(item.quantity)}
-                            onFocus={e => e.target.select()}
-                            onChange={e => {
-                              const val = e.target.value.replace(/[^0-9.]/g, '')
-                              const parts = val.split('.')
-                              const clean = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : val
-                              updateItem(item.id, 'quantity', clean === '' ? 0 : Number(clean) || 0)
-                            }}
-                            className={`w-full text-xs text-right border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white ${item.quantity === 0 ? 'text-red-400' : 'text-gray-700'}`} />
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <input type="text" value={String(item.material_unit_price)}
-                            onFocus={e => e.target.select()}
-                            onChange={e => updateItem(item.id, 'material_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
-                            className="w-full text-xs text-right text-blue-700 font-medium border border-transparent hover:border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
-                        </td>
-                        <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 whitespace-nowrap bg-blue-50/40">
-                          {(item.material_unit_price * item.quantity).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-1.5">
-                          <input type="text" value={String(item.labor_unit_price)}
-                            onFocus={e => e.target.select()}
-                            onChange={e => updateItem(item.id, 'labor_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
-                            className="w-full text-xs text-right text-amber-700 font-medium border border-transparent hover:border-amber-200 focus:border-amber-400 focus:ring-1 focus:ring-amber-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
-                        </td>
-                        <td className="px-3 py-1.5 text-right text-xs font-semibold text-amber-700 whitespace-nowrap bg-amber-50/40">
-                          {(item.labor_unit_price * item.quantity).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-600 whitespace-nowrap">
-                          {(item.material_unit_price + item.labor_unit_price).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700 whitespace-nowrap">
-                          {((item.material_unit_price + item.labor_unit_price) * item.quantity).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-1.5 text-xs text-gray-400">{item.note}</td>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <div className="space-y-4 mb-6">
+            {allGrouped.map(({ wt, items: gItems }) => (
+              <div key={wt} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="px-5 py-2.5 flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${colorOf(wt)}`}>{wt}</span>
+                  <span className="text-xs text-gray-400">{gItems.length}개</span>
+                  <button onClick={() => addItem(wt)} className="text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 ml-auto">
+                    <Plus size={12} /> 항목 추가
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[900px]">
+                    <thead className="bg-gray-50 border-b border-gray-100">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-48">항목명</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-56">Comment</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 w-12">단위</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-20">수량</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-blue-500 w-28">재료단가</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-blue-600 w-28 bg-blue-50">재료금액</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-amber-500 w-28">노무단가</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-amber-600 w-28 bg-amber-50">노무금액</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-24">합계단가</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 w-28">합계금액</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">비고</th>
+                        <th className="sticky right-0 bg-gray-50 w-8 z-10"></th>
                       </tr>
-                    ))}
-                    <tr className="bg-gray-50 border-t-2 border-gray-200">
-                      <td colSpan={4} className="px-3 py-2 text-xs font-bold text-gray-700 text-right">{wt} 합계</td>
-                      <td className="px-3 py-2 text-xs text-right text-gray-400">-</td>
-                      <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
-                        {gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0).toLocaleString()}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-right text-gray-400">-</td>
-                      <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
-                        {gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0).toLocaleString()}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-right text-gray-400">-</td>
-                      <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
-                        {gItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0).toLocaleString()}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tbody>
-                </table>
+                    </thead>
+                    <SortableContext items={gItems.map(i => i.tempId)} strategy={verticalListSortingStrategy}>
+                      <tbody className="divide-y divide-gray-50">
+                        {gItems.map(item => (
+                          <SortableQuoteRow
+                            key={item.tempId}
+                            item={item}
+                            upd={updateItem}
+                            del={deleteItem}
+                            addItemAt={addItemAt}
+                          />
+                        ))}
+                        <tr className="bg-gray-50 border-t-2 border-gray-200">
+                          <td colSpan={4} className="px-3 py-2 text-xs font-bold text-gray-700 text-right">{wt} 합계</td>
+                          <td className="px-3 py-2 text-xs text-right text-gray-400">-</td>
+                          <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
+                            {gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0).toLocaleString()}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-right text-gray-400">-</td>
+                          <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
+                            {gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0).toLocaleString()}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-right text-gray-400">-</td>
+                          <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
+                            {gItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0).toLocaleString()}
+                          </td>
+                          <td colSpan={2}></td>
+                        </tr>
+                      </tbody>
+                    </SortableContext>
+                  </table>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </DndContext>
       )}
 
       {/* 저장 버튼 */}

@@ -66,34 +66,44 @@ export default function ProjectDetailPage() {
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 mb-6">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">프로젝트 정보</h3>
         <div className="grid grid-cols-2 gap-4">
-          <div className="flex items-start gap-3">
-            <MapPin size={16} className="text-gray-400 mt-0.5" />
-            <div>
-              <p className="text-xs text-gray-400">현장 주소</p>
-              <p className="text-sm text-gray-700 mt-0.5">{project.address || '—'}</p>
-            </div>
+          <div>
+            <p className="text-xs text-gray-400">프로젝트명</p>
+            <p className="text-sm font-medium text-gray-800">{project.name}</p>
           </div>
-          <div className="flex items-start gap-3">
-            <Ruler size={16} className="text-gray-400 mt-0.5" />
+          <div>
+            <p className="text-xs text-gray-400">주소</p>
+            <p className="text-sm font-medium text-gray-800">{project.address || '-'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">PM</p>
+            <p className="text-sm font-medium text-gray-800">
+              {project.manager_name || '-'}{project.manager_phone && <span className="text-gray-400 ml-1">{project.manager_phone}</span>}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">담당디자이너</p>
+            <p className="text-sm font-medium text-gray-800">
+              {project.designer_name || '-'}{project.designer_phone && <span className="text-gray-400 ml-1">{project.designer_phone}</span>}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">담당소장</p>
+            <p className="text-sm font-medium text-gray-800">
+              {project.site_manager_name || '-'}{project.site_manager_phone && <span className="text-gray-400 ml-1">{project.site_manager_phone}</span>}
+            </p>
+          </div>
+          {project.area_sqm ? (
             <div>
               <p className="text-xs text-gray-400">면적</p>
-              <p className="text-sm text-gray-700 mt-0.5">{project.area_sqm ? `${project.area_sqm} m²` : '—'}</p>
+              <p className="text-sm font-medium text-gray-800">{project.area_sqm} m²</p>
             </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <Building2 size={16} className="text-gray-400 mt-0.5" />
-            <div>
-              <p className="text-xs text-gray-400">담당자</p>
-              <p className="text-sm text-gray-700 mt-0.5">{project.manager_name}</p>
+          ) : <div />}
+          {project.note && (
+            <div className="col-span-2">
+              <p className="text-xs text-gray-400">메모/참고사항</p>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap mt-0.5">{project.note}</p>
             </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <Phone size={16} className="text-gray-400 mt-0.5" />
-            <div>
-              <p className="text-xs text-gray-400">연락처</p>
-              <p className="text-sm text-gray-700 mt-0.5">{project.manager_phone}</p>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
