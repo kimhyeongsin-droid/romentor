@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { Copy, Plus, Trash2, X } from 'lucide-react'
 import { formatKRW } from '@/lib/utils'
 
-export default function QuotesPage() {
+function QuotesContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const projectId = searchParams.get('projectId')
@@ -174,5 +174,13 @@ export default function QuotesPage() {
         </table>
       </div>
     </div>
+  )
+}
+
+export default function QuotesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-gray-400">로딩중...</div>}>
+      <QuotesContent />
+    </Suspense>
   )
 }
