@@ -2,19 +2,13 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { WORK_TYPE_COLOR, type WorkType } from '@/types'
+import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { Plus, Trash2, Lock, RefreshCw, ChevronDown, GripVertical } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
 const PASSWORD = 'romentor2024'
-const WORK_ORDER: WorkType[] = [
-  '설계비용',
-  '가설공사', '철거', '마루철거', '설비', '전기배선', '창호', '목공', '도어',
-  '타일', '도장', '필름', '도배', '욕실도기', '조명', '바닥', '가구', '금속',
-  '유리실리콘', '공조', '홈스타일링', '기타'
-]
 
 interface TemplateItem {
   id: string; work_type: WorkType; item_name: string; unit: string

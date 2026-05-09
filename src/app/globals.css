@@ -5,7 +5,7 @@ body {
   color: #111827;
 }
 
-/* 인쇄 전용 - 화면에서 숨김 */
+/* 화면에서 숨기고 인쇄 시 보임 */
 .print-only {
   display: none;
 }
@@ -14,45 +14,38 @@ body {
   .print-only {
     display: block !important;
   }
-}
 
-/* 고객용 출력 - 내부 정보 숨김 */
-.print-client .internal-only {
-  display: none !important;
-}
-.print-client .client-quote-col {
-  display: table-cell !important;
-}
-
-@media print {
-  /* 고객용 출력 시 내부 컬럼 숨김 */
-  .print-client .internal-only {
-    display: none !important;
-  }
-  /* 사이드바, 버튼 숨기기 */
-  nav, aside, [class*="Sidebar"],
-  button, a[href] {
+  /* 모든 인쇄 모드에서 숨길 요소 (버튼, 네비, DnD 등) */
+  .no-print {
     display: none !important;
   }
 
-  /* 본문 전체 너비로 */
-  main, .main-content, [class*="p-8"] {
-    padding: 0 !important;
-    margin: 0 !important;
-    width: 100% !important;
+  /* 사이드바, 네비게이션 */
+  nav, aside {
+    display: none !important;
   }
 
-  /* 페이지 여백 */
+  /* 고객용 인쇄: 내부 전용 컬럼/행 숨김 */
+  body.print-client .internal-only {
+    display: none !important;
+  }
+
+  /* 배경색 흰색 */
+  body {
+    background: white !important;
+  }
+
+  /* 페이지 설정 */
   @page {
     margin: 15mm;
     size: A4 landscape;
   }
 
-  /* 테이블 깨짐 방지 */
+  /* 테이블 줄바꿈 방지 */
   table { page-break-inside: avoid; }
   tr { page-break-inside: avoid; }
 
-  /* 색상 유지 */
+  /* 배경색/테두리 인쇄 시 유지 */
   * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;

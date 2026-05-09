@@ -5,7 +5,7 @@ export type WorkType =
   | '필름' | '도배' | '욕실도기' | '조명' | '바닥'
   | '가구' | '금속' | '유리실리콘' | '공조' | '홈스타일링' | '기타'
 
-export const WORK_TYPES: WorkType[] = [
+export const WORK_ORDER: WorkType[] = [
   '설계비용',
   '가설공사', '철거', '마루철거', '설비', '전기배선',
   '창호', '목공', '도어', '타일', '도장',
@@ -94,6 +94,7 @@ export interface Quote {
   id: string
   project_id: string
   quote_number: string
+  quote_version: string | null
   version: number
   total_material_amount: number
   total_labor_amount: number
@@ -111,6 +112,7 @@ export interface Quote {
   final_amount: number
   status: 'draft' | 'confirmed' | 'executed'
   note: string | null
+  min_profit_rate?: number | null
   created_at: string
   updated_at: string
   project?: Project

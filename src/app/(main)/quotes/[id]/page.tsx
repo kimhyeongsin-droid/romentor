@@ -3,17 +3,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { WORK_TYPE_COLOR, type WorkType } from '@/types'
-import { ChevronDown, Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send, RotateCcw } from 'lucide-react'
+import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
+import { DEFAULT_RATES } from '@/lib/quoteConstants'
+import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send, RotateCcw, Pencil } from 'lucide-react'
+import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-
-const WORK_ORDER: WorkType[] = [
-  '설계비용', '가설공사', '철거', '마루철거', '설비', '전기배선', '창호', '목공', '도어',
-  '타일', '도장', '필름', '도배', '욕실도기', '조명', '바닥', '가구', '금속',
-  '유리실리콘', '공조', '홈스타일링', '기타'
-]
 
 function autoResize(el: HTMLTextAreaElement) {
   el.style.height = 'auto'
@@ -29,19 +25,23 @@ interface QuoteItem {
   quantity: number
   material_unit_price: number
   labor_unit_price: number
-  execution_amount: number
+  planned_execution_amount: number | null
+  actual_execution_amount: number | null
+  execution_amount: number | null
   note: string
+  sort_order: number | null
 }
 
 interface SortableItemRowProps {
   item: QuoteItem
   isEditable: boolean
+  isContract: boolean
   upd: (id: string, key: keyof QuoteItem, value: any) => void
   del: (id: string) => void
   addItemAt: (workType: string, afterId: string) => void
 }
 
-const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, upd, del, addItemAt }: SortableItemRowProps) {
+const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isContract, upd, del, addItemAt }: SortableItemRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
   const itemNameRef = useRef<HTMLTextAreaElement>(null)
@@ -56,18 +56,29 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
   const lab = item.labor_unit_price * item.quantity
   const fmt = (n: number) => n.toLocaleString()
 
+  const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
+  const planned = item.planned_execution_amount
+  const actual = item.actual_execution_amount
+  const execAmt: number | null = (actual != null && actual > 0) ? actual
+    : (planned != null && planned > 0) ? planned
+    : null
+  const isActualBased = actual != null && actual > 0
+  const profit: number | null = execAmt !== null ? quoteAmt - execAmt : null
+  const profitRate: number | null = execAmt !== null && quoteAmt > 0 ? (profit! / quoteAmt) * 100 : null
+  const isMinus = profit !== null && profit < 0
+
   return (
-    <tr ref={setNodeRef} style={style} className="group hover:bg-gray-50">
+    <tr ref={setNodeRef} style={style} className={`group hover:bg-gray-50 ${isContract && isMinus ? 'bg-red-50 border-l-2 border-red-400' : ''}`}>
       <td className="px-3 py-1.5 align-top flex items-start gap-1">
         {isEditable && (
           <>
             <span {...attributes} {...listeners}
-              className="flex-shrink-0 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 mt-1">
+              className="no-print flex-shrink-0 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 mt-1">
               <GripVertical size={12} />
             </span>
             <button
               onClick={() => addItemAt(item.work_type, item.id)}
-              className="flex-shrink-0 text-gray-200 hover:text-blue-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="no-print flex-shrink-0 text-gray-200 hover:text-blue-500 mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
               title="아래에 항목 추가"
             >
               <Plus size={12} />
@@ -139,16 +150,32 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
       <td className="px-3 py-1.5 text-right text-xs font-semibold text-amber-700 bg-amber-50/40">{fmt(lab)}</td>
       <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-600">{fmt(item.material_unit_price + item.labor_unit_price)}</td>
       <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700">{fmt(mat + lab)}</td>
-      <td className="px-3 py-1.5">
-        {isEditable ? (
-          <input type="text" value={String(item.execution_amount ?? 0)}
-            onFocus={e => e.target.select()}
-            onChange={e => upd(item.id, 'execution_amount', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
-            className="w-full text-xs text-right text-red-600 font-medium border border-transparent hover:border-red-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
-        ) : (
-          <span className="text-xs text-red-600 font-medium block text-right">{fmt(item.execution_amount ?? 0)}</span>
-        )}
-      </td>
+      {isContract && (
+        <>
+          <td className="internal-only px-3 py-1.5">
+            <input type="text"
+              value={planned != null && planned > 0 ? String(planned) : ''}
+              onFocus={e => e.target.select()}
+              onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'planned_execution_amount', v === '' ? null : Number(v)) }}
+              placeholder="-"
+              className="w-full text-xs text-right text-violet-600 font-medium border border-transparent hover:border-violet-200 focus:border-violet-400 focus:ring-1 focus:ring-violet-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
+          </td>
+          <td className="internal-only px-3 py-1.5">
+            <input type="text"
+              value={actual != null && actual > 0 ? String(actual) : ''}
+              onFocus={e => e.target.select()}
+              onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'actual_execution_amount', v === '' ? null : Number(v)) }}
+              placeholder="-"
+              className="w-full text-xs text-right text-red-600 font-medium border border-transparent hover:border-red-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
+          </td>
+          <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profit === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profit !== null && !isActualBased ? 'italic opacity-70' : ''}`}>
+            {profit !== null ? (isMinus ? '' : '+') + profit.toLocaleString() : '-'}
+          </td>
+          <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profitRate === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profitRate !== null && !isActualBased ? 'italic opacity-70' : ''}`}>
+            {profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
+          </td>
+        </>
+      )}
       <td className="px-3 py-1.5">
         {isEditable ? (
           <input value={item.note ?? ''}
@@ -160,7 +187,7 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
         )}
       </td>
       {isEditable && (
-        <td className="sticky right-0 w-8 px-2 py-1.5 bg-white group-hover:bg-gray-50">
+        <td className="no-print sticky right-0 w-8 px-2 py-1.5 bg-white group-hover:bg-gray-50">
           <button onClick={() => del(item.id)} className="text-gray-200 hover:text-red-500 p-1">
             <Trash2 size={12} />
           </button>
@@ -179,25 +206,51 @@ export default function QuoteDetailPage() {
   const [saving, setSaving] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(true)
   const [discount, setDiscount] = useState(0)
-  const [rates, setRates] = useState({
-    accident: 3.78, employment: 2.05, overhead: 5, profit: 15, vat: 10
-  })
+  const [rates, setRates] = useState(DEFAULT_RATES)
+  const [printMode, setPrintMode] = useState<null | 'client' | 'internal'>(null)
+  const [minProfitRate, setMinProfitRate] = useState<number | null>(null)
+  const [editingRate, setEditingRate] = useState(false)
+  const [rateInputVal, setRateInputVal] = useState('')
+  const [contractUnlocked, setContractUnlocked] = useState(false)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordError, setPasswordError] = useState(false)
+
+  useEffect(() => {
+    if (!printMode) return
+    document.body.classList.remove('print-client', 'print-internal')
+    document.body.classList.add(`print-${printMode}`)
+    window.print()
+    document.body.classList.remove('print-client', 'print-internal')
+    setPrintMode(null)
+  }, [printMode])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
-  const isEditable = quote?.status !== '배포완료'
+  const isContract = quote?.status === '계약견적서'
+  const isEditable = quote?.status === '작성중'
+  const isContractEditable = isContract && contractUnlocked
 
   useEffect(() => {
     const sb = createClient()
     Promise.all([
-      sb.from('quotes').select('*, projects(name)').eq('id', id).single(),
-      sb.from('quote_items').select('*').eq('quote_id', id).order('work_type').order('created_at')
+      sb.from('quotes').select('*, projects(name, min_profit_rate)').eq('id', id).single(),
+      sb.from('quote_items').select('*').eq('quote_id', id).order('created_at')
     ]).then(([{ data: q }, { data: its }]) => {
       setQuote(q)
+      if (q) {
+        const rate = q.min_profit_rate ?? q.projects?.min_profit_rate ?? null
+        setMinProfitRate(rate)
+        setRateInputVal(rate !== null ? String(rate) : '')
+      }
       if (its) {
         const sorted = [...its].sort((a, b) => {
-          if (a.work_type === '설계비용') return -1
-          if (b.work_type === '설계비용') return 1
-          return (WORK_ORDER.indexOf(a.work_type as WorkType) - WORK_ORDER.indexOf(b.work_type as WorkType))
+          if (a.work_type === '설계비용' && b.work_type !== '설계비용') return -1
+          if (b.work_type === '설계비용' && a.work_type !== '설계비용') return 1
+          const wtDiff = WORK_ORDER.indexOf(a.work_type as WorkType) - WORK_ORDER.indexOf(b.work_type as WorkType)
+          if (wtDiff !== 0) return wtDiff
+          const aSo = a.sort_order ?? Infinity
+          const bSo = b.sort_order ?? Infinity
+          return aSo - bSo
         })
         setItems(sorted)
       }
@@ -274,21 +327,152 @@ export default function QuoteDetailPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    const sb = createClient()
-    await Promise.all(items.map(item =>
-      sb.from('quote_items').update({
-        item_name: item.item_name,
-        comment: item.comment,
-        unit: item.unit,
-        quantity: item.quantity,
-        material_unit_price: item.material_unit_price,
-        labor_unit_price: item.labor_unit_price,
-        execution_amount: item.execution_amount ?? 0,
-        note: item.note,
-      }).eq('id', item.id)
-    ))
-    setSaving(false)
-    alert('✅ 저장됐습니다.')
+    try {
+      const sb = createClient()
+      const currentStatus = quote?.status
+      console.log('[handleSave] status:', currentStatus, '| isContract:', isContract, '| contractUnlocked:', contractUnlocked)
+      console.log('[handleSave] items sample:', JSON.stringify(items.slice(0, 2).map(i => ({
+        id: i.id,
+        item_name: i.item_name,
+        planned_execution_amount: i.planned_execution_amount,
+        actual_execution_amount: i.actual_execution_amount,
+      }))))
+      if (currentStatus === '계약견적서') {
+
+        const results = await Promise.all(items.map((item, idx) => {
+          const effectiveExec = (item.actual_execution_amount ?? 0) > 0
+            ? item.actual_execution_amount!
+            : (item.planned_execution_amount ?? 0)
+          return sb.from('quote_items').update({
+            item_name: item.item_name,
+            comment: item.comment,
+            unit: item.unit,
+            quantity: item.quantity,
+            material_unit_price: item.material_unit_price,
+            labor_unit_price: item.labor_unit_price,
+            note: item.note,
+            sort_order: idx,
+            planned_execution_amount: item.planned_execution_amount,
+            actual_execution_amount: item.actual_execution_amount,
+            execution_amount: effectiveExec,
+          }).eq('id', item.id)
+        }))
+
+        results.forEach((r, idx) => {
+          if (r.error) {
+            console.error(`[handleSave] item[${idx}] id=${items[idx]?.id} 저장 실패:`, {
+              code: r.error.code,
+              message: r.error.message,
+              details: r.error.details,
+              hint: r.error.hint,
+            })
+          }
+        })
+
+        const failed = results.filter(r => r.error)
+        if (failed.length > 0) {
+          alert(`❌ 저장 실패: ${failed[0].error?.message ?? '알 수 없는 오류'}`)
+          setSaving(false)
+          return
+        }
+
+        const totalQuote = items.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+        const totalExec = items.reduce((s, i) => {
+          const a = i.actual_execution_amount ?? 0
+          const p = i.planned_execution_amount ?? 0
+          return s + (a > 0 ? a : p)
+        }, 0)
+        if (totalExec > 0 && totalQuote > 0) {
+          const currentRate = ((totalQuote - totalExec) / totalQuote) * 100
+          const minRate: number | null = minProfitRate
+          const smsAlerts: Promise<Response>[] = []
+          if (minRate !== null && currentRate < minRate) {
+            smsAlerts.push(fetch('/api/sms', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quoteId: id, type: 'profit_warning' }),
+            }))
+          }
+          if (currentRate < 0) {
+            smsAlerts.push(fetch('/api/sms', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quoteId: id, type: 'total' }),
+            }))
+          }
+          await Promise.all(smsAlerts)
+
+          const workTypeMap: Record<string, { quote: number; actual: number }> = {}
+          for (const item of items) {
+            const actual = item.actual_execution_amount ?? 0
+            if (actual <= 0) continue
+            if (!workTypeMap[item.work_type]) workTypeMap[item.work_type] = { quote: 0, actual: 0 }
+            workTypeMap[item.work_type].quote += (item.material_unit_price + item.labor_unit_price) * item.quantity
+            workTypeMap[item.work_type].actual += actual
+          }
+          const minusWorkTypes = Object.entries(workTypeMap)
+            .filter(([, v]) => v.quote - v.actual < 0)
+            .map(([name, v]) => ({ name, profit: v.quote - v.actual }))
+          if (minusWorkTypes.length > 0) {
+            await fetch('/api/sms', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quoteId: id, type: 'item_minus', items: minusWorkTypes }),
+            })
+          }
+        }
+      } else {
+        console.log('[handleSave] else branch — status is not 계약견적서')
+        const results = await Promise.all(items.map((item, idx) =>
+          sb.from('quote_items').update({
+            item_name: item.item_name,
+            comment: item.comment,
+            unit: item.unit,
+            quantity: item.quantity,
+            material_unit_price: item.material_unit_price,
+            labor_unit_price: item.labor_unit_price,
+            execution_amount: item.execution_amount ?? 0,
+            note: item.note,
+            sort_order: idx,
+          }).eq('id', item.id)
+        ))
+
+        const failed = results.filter(r => r.error)
+        if (failed.length > 0) {
+          console.error('저장 실패:', failed.map(r => r.error))
+          alert(`❌ 저장 실패: ${failed[0].error?.message ?? '알 수 없는 오류'}`)
+          setSaving(false)
+          return
+        }
+      }
+
+      setSaving(false)
+      alert('✅ 저장됐습니다.')
+      if (isContract) setContractUnlocked(false)
+    } catch (err) {
+      console.error('저장 중 예외:', err)
+      alert('❌ 저장 중 오류가 발생했습니다.')
+      setSaving(false)
+    }
+  }
+
+  const handlePasswordConfirm = () => {
+    if (passwordInput === (process.env.NEXT_PUBLIC_CONTRACT_PASSWORD ?? '1234')) {
+      setContractUnlocked(true)
+      setShowPasswordModal(false)
+      setPasswordInput('')
+      setPasswordError(false)
+    } else {
+      setPasswordError(true)
+    }
+  }
+
+  const saveMinProfitRate = async (val: number | null) => {
+    const safeVal = val !== null && isFinite(val) ? val : null
+    await createClient().from('quotes').update({ min_profit_rate: safeVal }).eq('id', id)
+    setMinProfitRate(safeVal)
+    setRateInputVal(safeVal !== null ? String(safeVal) : '')
+    setEditingRate(false)
   }
 
   const handlePublish = async () => {
@@ -304,23 +488,44 @@ export default function QuoteDetailPage() {
     setQuote((prev: any) => ({ ...prev, status: '작성중' }))
   }
 
+  const handleContract = async () => {
+    if (!confirm('이 견적서를 계약견적서로 확정하시겠습니까?\n계약견적서는 수정이 불가능합니다.')) return
+    const sb = createClient()
+    if (minProfitRate !== null) {
+      const toUpdate = items.filter(i => !(i.planned_execution_amount != null && i.planned_execution_amount > 0))
+      if (toUpdate.length > 0) {
+        await Promise.all(toUpdate.map(item => {
+          const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
+          const planned = Math.round(quoteAmt * (1 - minProfitRate / 100))
+          return sb.from('quote_items').update({
+            planned_execution_amount: planned,
+            execution_amount: planned,
+          }).eq('id', item.id)
+        }))
+        setItems(prev => prev.map(item => {
+          if (item.planned_execution_amount != null && item.planned_execution_amount > 0) return item
+          const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
+          const planned = Math.round(quoteAmt * (1 - minProfitRate / 100))
+          return { ...item, planned_execution_amount: planned, execution_amount: planned }
+        }))
+      }
+    }
+    await sb.from('quotes').update({ status: '계약견적서' }).eq('id', id)
+    setQuote((prev: any) => ({ ...prev, status: '계약견적서' }))
+    alert('✅ 계약견적서로 확정됐습니다.')
+  }
+
   const grouped = WORK_ORDER
     .map(wt => ({ wt, items: items.filter(i => i.work_type === wt) }))
-    .filter(g => g.items.length > 0)
+    .filter(g => isEditable || isContractEditable || g.items.length > 0)
 
-  const directMaterial = items.reduce((s, i) => s + i.material_unit_price * i.quantity, 0)
-  const directLabor = items.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0)
-  const directTotal = directMaterial + directLabor
-  const indirectAccident = Math.round(directLabor * rates.accident / 100)
-  const indirectEmployment = Math.round(directLabor * rates.employment / 100)
-  const indirectOverhead = Math.round(directTotal * rates.overhead / 100)
-  const indirectProfit = Math.round(directTotal * rates.profit / 100)
-  const indirectTotal = indirectAccident + indirectEmployment + indirectOverhead + indirectProfit
-  const vat = Math.round(directTotal * rates.vat / 100)
-  const finalTotal = directTotal + indirectTotal + vat + discount
-  const totalExecution = items.reduce((s, i) => s + (i.execution_amount ?? 0), 0)
-  const totalProfit = finalTotal - totalExecution
   const fmt = (n: number) => n.toLocaleString()
+
+  const _totalQuote = items.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+  const _totalPlanned = items.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
+  const plannedProfitRate = _totalQuote > 0 && _totalPlanned > 0
+    ? ((_totalQuote - _totalPlanned) / _totalQuote) * 100
+    : null
 
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
 
@@ -335,10 +540,61 @@ export default function QuoteDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-2xl font-bold text-gray-900">{quote?.projects?.name ?? '프로젝트 없음'}</h2>
-              {quote?.status === '배포완료'
+              {quote?.quote_version && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  quote.quote_version === '가견적' ? 'bg-gray-100 text-gray-600' :
+                  quote.quote_version === '1차견적' ? 'bg-blue-100 text-blue-700' :
+                  quote.quote_version === '2차견적' ? 'bg-violet-100 text-violet-700' :
+                  'bg-orange-100 text-orange-700'
+                }`}>{quote.quote_version}</span>
+              )}
+              {quote?.status === '계약견적서'
+                ? <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium">계약견적서</span>
+                : quote?.status === '배포완료'
                 ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">배포완료</span>
                 : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">작성중</span>
               }
+              {editingRate ? (
+                <span className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    value={rateInputVal}
+                    onChange={e => setRateInputVal(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        const v = rateInputVal.trim()
+                        saveMinProfitRate(v === '' ? null : Number(v))
+                      }
+                      if (e.key === 'Escape') setEditingRate(false)
+                    }}
+                    onBlur={() => {
+                      const v = rateInputVal.trim()
+                      saveMinProfitRate(v === '' ? null : Number(v))
+                    }}
+                    autoFocus
+                    className="w-16 text-xs text-center border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                  />
+                  <span className="text-xs text-gray-400">%</span>
+                </span>
+              ) : (
+                <button
+                  onClick={() => { setRateInputVal(minProfitRate !== null ? String(minProfitRate) : ''); setEditingRate(true) }}
+                  title="클릭하여 목표 이윤율 수정"
+                  className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 hover:opacity-80 transition-opacity ${
+                    minProfitRate === null
+                      ? 'bg-gray-100 text-gray-400'
+                      : plannedProfitRate === null
+                      ? 'bg-gray-100 text-gray-500'
+                      : plannedProfitRate >= minProfitRate
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}
+                >
+                  <Pencil size={10} />
+                  {minProfitRate !== null ? `목표 ${minProfitRate}%` : '목표 설정'}
+                  {minProfitRate !== null && plannedProfitRate !== null && ` / 예상 ${plannedProfitRate.toFixed(1)}%`}
+                </button>
+              )}
             </div>
             <p className="text-sm text-gray-400 mt-0.5">
               {quote?.note && <span className="mr-3">{quote.note}</span>}
@@ -346,12 +602,38 @@ export default function QuoteDetailPage() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => window.print()}
+        <div className="flex gap-2 no-print">
+          <button onClick={() => setPrintMode('client')}
             className="flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
-            <Printer size={15} /> 인쇄
+            <Printer size={15} /> 고객용 인쇄
           </button>
-          {isEditable ? (
+          <button onClick={() => setPrintMode('internal')}
+            className="flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
+            <Printer size={15} /> 내부용 인쇄
+          </button>
+          {isContract ? (
+            <>
+              {contractUnlocked && (
+                <button onClick={handleSave} disabled={saving}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                  <Save size={15} /> {saving ? '저장 중...' : '저장'}
+                </button>
+              )}
+              {contractUnlocked ? (
+                <button
+                  onClick={() => { if (confirm('수정을 잠금하시겠습니까?')) setContractUnlocked(false) }}
+                  className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-600">
+                  🔓 수정 중
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setPasswordInput(''); setPasswordError(false); setShowPasswordModal(true) }}
+                  className="flex items-center gap-2 bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-500">
+                  🔒 수정 잠금
+                </button>
+              )}
+            </>
+          ) : isEditable ? (
             <>
               <button onClick={handleSave} disabled={saving}
                 className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
@@ -363,143 +645,38 @@ export default function QuoteDetailPage() {
               </button>
             </>
           ) : (
-            <button onClick={handleUnpublish}
-              className="flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600">
-              <RotateCcw size={15} /> 수정하기
-            </button>
+            <div className="flex gap-2 items-start">
+              <div className="flex flex-col items-start gap-0.5">
+                <button onClick={handleContract}
+                  className="flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-600">
+                  계약 확정
+                </button>
+                {minProfitRate !== null && (
+                  <p className="text-xs text-gray-400">목표이윤율({minProfitRate}%) 기준으로 예상실행가가 자동 설정됩니다</p>
+                )}
+              </div>
+              <button onClick={handleUnpublish}
+                className="flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600">
+                <RotateCcw size={15} /> 수정하기
+              </button>
+            </div>
           )}
         </div>
       </div>
 
       {/* 견적 합계표 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-6 overflow-hidden">
-        <button onClick={() => setSummaryOpen(v => !v)}
-          className="w-full px-5 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100 border-b border-gray-200">
-          <span className="font-bold text-gray-900 text-sm">견적 합계표</span>
-          <ChevronDown size={16} className={`text-gray-400 transition-transform ${summaryOpen ? '' : '-rotate-90'}`} />
-        </button>
-        {summaryOpen && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[600px]">
-              <thead>
-                <tr className="bg-gray-800 text-white">
-                  <th className="px-4 py-2.5 text-center text-xs w-12">번호</th>
-                  <th className="px-4 py-2.5 text-left text-xs">명 칭</th>
-                  <th className="px-4 py-2.5 text-right text-xs w-36">재료비</th>
-                  <th className="px-4 py-2.5 text-right text-xs w-36">노무비</th>
-                  <th className="px-4 py-2.5 text-right text-xs w-36">합계</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="bg-blue-50">
-                  <td colSpan={5} className="px-4 py-2 text-xs font-bold text-blue-800">■ 직접공사비</td>
-                </tr>
-                {WORK_ORDER.map((wt, idx) => {
-                  const wtItems = items.filter(i => i.work_type === wt)
-                  if (!wtItems.length) return null
-                  const mat = wtItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0)
-                  const lab = wtItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0)
-                  return (
-                    <tr key={wt} className="hover:bg-gray-50 border-t border-gray-100">
-                      <td className="px-4 py-2 text-xs text-gray-400 text-center">{idx + 1}</td>
-                      <td className="px-4 py-2">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
-                      </td>
-                      <td className="px-4 py-2 text-xs text-blue-700 text-right">{fmt(mat)}</td>
-                      <td className="px-4 py-2 text-xs text-amber-700 text-right">{fmt(lab)}</td>
-                      <td className="px-4 py-2 text-xs font-semibold text-right">{fmt(mat + lab)}</td>
-                    </tr>
-                  )
-                })}
-                <tr className="bg-gray-100">
-                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold">직접공사비 합계</td>
-                  <td className="px-4 py-2.5 text-xs text-blue-800 font-bold text-right">{fmt(directMaterial)}</td>
-                  <td className="px-4 py-2.5 text-xs text-amber-800 font-bold text-right">{fmt(directLabor)}</td>
-                  <td className="px-4 py-2.5 text-xs font-bold text-right">{fmt(directTotal)}</td>
-                </tr>
-                <tr className="bg-orange-50">
-                  <td colSpan={5} className="px-4 py-2 text-xs font-bold text-orange-800">■ 간접공사비</td>
-                </tr>
-                {[
-                  { label: '산재보험료', key: 'accident', base: '노무비', val: indirectAccident },
-                  { label: '고용보험료', key: 'employment', base: '노무비', val: indirectEmployment },
-                  { label: '공과잡비', key: 'overhead', base: '직접공사비', val: indirectOverhead },
-                  { label: '기업이윤', key: 'profit', base: '직접공사비', val: indirectProfit },
-                ].map(({ label, key, base, val }) => (
-                  <tr key={key} className="hover:bg-gray-50 border-t border-gray-100">
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
-                    <td className="px-4 py-2 text-xs text-gray-700">
-                      {label} ({base} ×{' '}
-                      {isEditable ? (
-                        <input type="number" value={rates[key as keyof typeof rates]}
-                          onChange={e => setRates(r => ({ ...r, [key]: Number(e.target.value) }))}
-                          className="w-12 text-xs text-center border-b border-gray-300 focus:outline-none bg-transparent"
-                          step="0.01" />
-                      ) : rates[key as keyof typeof rates]}
-                      %)
-                    </td>
-                    <td colSpan={2} className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                    <td className="px-4 py-2 text-xs text-gray-700 text-right">{fmt(val)}</td>
-                  </tr>
-                ))}
-                <tr className="bg-gray-100">
-                  <td colSpan={4} className="px-4 py-2.5 text-xs font-bold">간접공사비 합계</td>
-                  <td className="px-4 py-2.5 text-xs font-bold text-right">{fmt(indirectTotal)}</td>
-                </tr>
-                <tr className="hover:bg-gray-50 border-t border-gray-100">
-                  <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
-                  <td className="px-4 py-2 text-xs text-gray-700">
-                    부가세 (직접공사비 ×{' '}
-                    {isEditable ? (
-                      <input type="number" value={rates.vat}
-                        onChange={e => setRates(r => ({ ...r, vat: Number(e.target.value) }))}
-                        className="w-12 text-xs text-center border-b border-gray-300 focus:outline-none bg-transparent"
-                        step="0.1" />
-                    ) : rates.vat}
-                    %)
-                  </td>
-                  <td colSpan={2} className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                  <td className="px-4 py-2 text-xs text-gray-700 text-right">{fmt(vat)}</td>
-                </tr>
-                <tr className="hover:bg-gray-50 border-t border-gray-100">
-                  <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
-                  <td className="px-4 py-2 text-xs text-gray-700">단수할인</td>
-                  <td colSpan={2} className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                  <td className="px-4 py-2 text-right">
-                    {isEditable ? (
-                      <input type="number" value={discount}
-                        onChange={e => setDiscount(Number(e.target.value))}
-                        className="w-full text-xs text-right border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300" />
-                    ) : (
-                      <span className="text-xs text-gray-700">{fmt(discount)}</span>
-                    )}
-                  </td>
-                </tr>
-                {totalExecution > 0 && (
-                  <>
-                    <tr className={totalProfit < 0 ? 'bg-red-50' : 'bg-green-50'}>
-                      <td colSpan={4} className="px-4 py-2.5 text-xs font-bold">실행금액 합계</td>
-                      <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalExecution)} 원</td>
-                    </tr>
-                    <tr className={totalProfit < 0 ? 'bg-red-100' : 'bg-green-100'}>
-                      <td colSpan={4} className="px-4 py-2.5 text-xs font-bold">
-                        예상 이윤 {totalProfit < 0 ? '⚠️ 마이너스!' : ''}
-                      </td>
-                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                        {fmt(totalProfit)} 원
-                      </td>
-                    </tr>
-                  </>
-                )}
-                <tr className="bg-gray-900">
-                  <td colSpan={4} className="px-4 py-3.5 text-sm font-bold text-white">최종 합계</td>
-                  <td className="px-4 py-3.5 text-sm font-bold text-white text-right">{fmt(finalTotal)} 원</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <QuoteSummaryTable
+        items={items}
+        rates={rates}
+        discount={discount}
+        open={summaryOpen}
+        onToggle={() => setSummaryOpen(v => !v)}
+        isEditable={isEditable || isContractEditable}
+        isContract={isContract}
+        minProfitRate={minProfitRate ?? undefined}
+        onRateChange={(key, value) => setRates(r => ({ ...r, [key]: value }))}
+        onDiscountChange={setDiscount}
+      />
 
       {/* 공종별 테이블 */}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -509,9 +686,13 @@ export default function QuoteDetailPage() {
               <div className="px-5 py-2.5 flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
                 <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
                 <span className="text-xs text-gray-400">{gItems.length}개</span>
-                {isEditable && (
+                {isContract && (() => {
+                  const actualCount = gItems.filter(i => (i.actual_execution_amount ?? 0) > 0).length
+                  return <span className="text-xs text-gray-400 ml-1">{actualCount}/{gItems.length} 실입력</span>
+                })()}
+                {(isEditable || isContractEditable) && (
                   <button onClick={() => addItem(wt)}
-                    className="text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 ml-auto">
+                    className="no-print text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 ml-auto">
                     <Plus size={12} /> 항목 추가
                   </button>
                 )}
@@ -530,9 +711,16 @@ export default function QuoteDetailPage() {
                       <th className="px-3 py-2 text-right text-xs font-semibold text-amber-600 w-28 bg-amber-50">노무금액</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-24">합계단가</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 w-28">합계금액</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-red-500 w-28">실행금액</th>
+                      {isContract && (
+                        <>
+                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-violet-500 w-28">예상실행가</th>
+                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-red-500 w-28">실제실행가</th>
+                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-green-500 w-24">이윤</th>
+                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-green-500 w-20">이윤율</th>
+                        </>
+                      )}
                       <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">비고</th>
-                      {isEditable && <th className="sticky right-0 bg-gray-50 w-8 z-10"></th>}
+                      {(isEditable || isContractEditable) && <th className="no-print sticky right-0 bg-gray-50 w-8 z-10"></th>}
                     </tr>
                   </thead>
                   <SortableContext items={gItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
@@ -541,31 +729,59 @@ export default function QuoteDetailPage() {
                         <SortableItemRow
                           key={item.id}
                           item={item}
-                          isEditable={isEditable}
+                          isEditable={isEditable || isContractEditable}
+                          isContract={isContract}
                           upd={updateItem}
                           del={deleteItem}
                           addItemAt={addItemAt}
                         />
                       ))}
-                      <tr className="bg-gray-50 border-t-2 border-gray-200">
-                        <td colSpan={4} className="px-3 py-2 text-xs font-bold text-gray-700 text-right">{wt} 합계</td>
-                        <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
-                        <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
-                          {fmt(gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0))}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
-                        <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
-                          {fmt(gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0))}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
-                        <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
-                          {fmt(gItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0))}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-right text-red-600 font-bold">
-                          {fmt(gItems.reduce((s, i) => s + (i.execution_amount ?? 0), 0))}
-                        </td>
-                        <td colSpan={isEditable ? 2 : 1}></td>
-                      </tr>
+                      {(() => {
+                        const groupQuote = gItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+                        const groupPlanned = gItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
+                        const groupActual = gItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+                        const groupEffective = gItems.reduce((s, i) => {
+                          const a = i.actual_execution_amount ?? 0
+                          const p = i.planned_execution_amount ?? 0
+                          return s + (a > 0 ? a : p)
+                        }, 0)
+                        const groupProfit: number | null = groupEffective > 0 ? groupQuote - groupEffective : null
+                        const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
+                        return (
+                          <tr className="bg-gray-50 border-t-2 border-gray-200">
+                            <td colSpan={4} className="px-3 py-2 text-xs font-bold text-gray-700 text-right">{wt} 합계</td>
+                            <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
+                            <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
+                              {fmt(gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0))}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
+                            <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
+                              {fmt(gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0))}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
+                            <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
+                              {fmt(groupQuote)}
+                            </td>
+                            {isContract && (
+                              <>
+                                <td className="internal-only px-3 py-2 text-xs text-right text-violet-600 font-bold">
+                                  {groupPlanned > 0 ? fmt(groupPlanned) : '-'}
+                                </td>
+                                <td className="internal-only px-3 py-2 text-xs text-right text-red-600 font-bold">
+                                  {groupActual > 0 ? fmt(groupActual) : '-'}
+                                </td>
+                                <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfit === null ? 'text-gray-300' : groupProfit < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                  {groupProfit !== null ? (groupProfit >= 0 ? '+' : '') + fmt(groupProfit) : '-'}
+                                </td>
+                                <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfitRate === null ? 'text-gray-300' : groupProfitRate < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                  {groupProfitRate !== null ? groupProfitRate.toFixed(1) + '%' : '-'}
+                                </td>
+                              </>
+                            )}
+                            <td colSpan={(isEditable || isContractEditable) ? 2 : 1}></td>
+                          </tr>
+                        )
+                      })()}
                     </tbody>
                   </SortableContext>
                 </table>
@@ -576,20 +792,53 @@ export default function QuoteDetailPage() {
       </DndContext>
 
       {/* 하단 저장 버튼 */}
-      {isEditable && (
-        <div className="flex gap-3 mt-8">
+      {(isEditable || isContractEditable) && (
+        <div className="no-print flex gap-3 mt-8">
           <button onClick={handleSave} disabled={saving}
             className="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50">
             {saving ? '저장 중...' : '견적서 저장'}
           </button>
-          <button onClick={handlePublish}
-            className="bg-green-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-green-700">
-            배포하기
-          </button>
+          {isEditable && (
+            <button onClick={handlePublish}
+              className="bg-green-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-green-700">
+              배포하기
+            </button>
+          )}
           <button onClick={() => router.back()}
             className="bg-gray-100 text-gray-600 px-8 py-3 rounded-lg font-medium hover:bg-gray-200">
             목록으로
           </button>
+        </div>
+      )}
+      {/* 비밀번호 모달 */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-80">
+            <h3 className="font-bold text-gray-900 mb-1">계약견적서 수정 잠금 해제</h3>
+            <p className="text-sm text-gray-500 mb-4">관리자 비밀번호를 입력하세요</p>
+            <input
+              type="password"
+              value={passwordInput}
+              onChange={e => { setPasswordInput(e.target.value); setPasswordError(false) }}
+              onKeyDown={e => { if (e.key === 'Enter') handlePasswordConfirm() }}
+              autoFocus
+              placeholder="비밀번호"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+            {passwordError && (
+              <p className="text-xs text-red-500 mt-2">비밀번호가 올바르지 않습니다</p>
+            )}
+            <div className="flex gap-2 mt-4">
+              <button onClick={handlePasswordConfirm}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+                확인
+              </button>
+              <button onClick={() => setShowPasswordModal(false)}
+                className="flex-1 bg-gray-100 text-gray-600 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
+                취소
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

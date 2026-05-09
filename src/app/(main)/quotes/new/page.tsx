@@ -7,16 +7,13 @@ import { CSS } from '@dnd-kit/utilities'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { generateQuoteNumber } from '@/lib/utils'
-import { WORK_TYPE_COLOR } from '@/types'
-import { ChevronDown, Plus, Trash2, GripVertical } from 'lucide-react'
+import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
+import { DEFAULT_RATES } from '@/lib/quoteConstants'
+import { Plus, Trash2, GripVertical } from 'lucide-react'
+import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
 
 const SIZE_CATEGORIES = ['20평대','30평대','40평대','50평대','60평대','70평대','80평대','90평대','100평대이상']
 
-const WORK_ORDER = [
-  '설계비용', '가설공사', '철거', '마루철거', '설비', '전기배선', '창호', '목공', '도어',
-  '타일', '도장', '필름', '도배', '욕실도기', '조명', '바닥', '가구', '금속',
-  '유리실리콘', '공조', '홈스타일링', '기타',
-]
 
 interface QuoteItem {
   tempId: string
@@ -30,8 +27,6 @@ interface QuoteItem {
   note: string
   sort_order: number
 }
-
-const fmt = (n: number) => n.toLocaleString()
 
 function colorOf(wt: string) {
   return (WORK_TYPE_COLOR as Record<string, string>)[wt] ?? 'bg-gray-100 text-gray-600'
@@ -136,61 +131,123 @@ const SortableQuoteRow = React.memo(function SortableQuoteRow({ item, upd, del, 
 function NewQuoteForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const copyFromId = searchParams.get('copyFrom')
 
   const [projects, setProjects] = useState<any[]>([])
   const [projectId, setProjectId] = useState(searchParams.get('projectId') ?? '')
+  const [copyFromProjectId, setCopyFromProjectId] = useState('')
+  const [copyFromProjectName, setCopyFromProjectName] = useState('')
   const [quoteVersion, setQuoteVersion] = useState('가견적')
   const [note, setNote] = useState('')
   const [items, setItems] = useState<QuoteItem[]>([])
   const [sizeCategory, setSizeCategory] = useState('50평대')
   const [pyeong, setPyeong] = useState('')
   const [loading, setLoading] = useState(false)
+  const [loadingTemplate, setLoadingTemplate] = useState(true)
   const [summaryOpen, setSummaryOpen] = useState(true)
   const [discount, setDiscount] = useState(0)
-  const [rates, setRates] = useState({
-    accident: 3.78,
-    employment: 2.05,
-    overhead: 5,
-    profit: 15,
-    vat: 10,
-  })
+  const [rates, setRates] = useState(DEFAULT_RATES)
+  const [minProfitRate, setMinProfitRate] = useState<number>(15)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
+  // 프로젝트 목록 로드
   useEffect(() => {
     createClient()
       .from('projects')
-      .select('id, name')
+      .select('id, name, min_profit_rate')
       .order('created_at', { ascending: false })
       .then(({ data }) => setProjects(data ?? []))
   }, [])
 
+  useEffect(() => {
+    if (!projectId || projects.length === 0) return
+    const p = projects.find(proj => proj.id === projectId)
+    if (p?.min_profit_rate != null) setMinProfitRate(p.min_profit_rate)
+  }, [projectId, projects])
+
+  // 기본 포맷 자동 로드 (복사 모드에서는 스킵)
+  useEffect(() => {
+    if (copyFromId) return
+    const autoLoad = async () => {
+      const { data: templates } = await createClient()
+        .from('quote_templates')
+        .select('*')
+        .eq('size_category', sizeCategory)
+        .order('sort_order')
+      setLoadingTemplate(false)
+      if (!templates || templates.length === 0) return
+      const sorted = [...templates].sort((a: any, b: any) => {
+        if (a.work_type === '설계비용') return -1
+        if (b.work_type === '설계비용') return 1
+        return (WORK_ORDER.indexOf(a.work_type) - WORK_ORDER.indexOf(b.work_type)) || (a.sort_order - b.sort_order)
+      })
+      setItems(sorted.map((t: any, idx: number) => ({
+        tempId: `tmp_${t.id}_${idx}`,
+        work_type: t.work_type,
+        item_name: t.item_name,
+        comment: t.comment ?? '',
+        unit: t.unit,
+        quantity: t.quantity,
+        material_unit_price: t.material_unit_price ?? 0,
+        labor_unit_price: t.labor_unit_price ?? 0,
+        note: t.note ?? '',
+        sort_order: t.sort_order,
+      })))
+    }
+    autoLoad()
+  }, [])
+
+  // 복사 모드: 원본 견적 로드
+  useEffect(() => {
+    if (!copyFromId) return
+    const loadCopy = async () => {
+      const sb = createClient()
+      const [{ data: q }, { data: its }] = await Promise.all([
+        sb.from('quotes').select('*, projects(id, name)').eq('id', copyFromId).single(),
+        sb.from('quote_items').select('*').eq('quote_id', copyFromId).order('work_type').order('created_at'),
+      ])
+
+      if (q) {
+        setProjectId(q.project_id ?? '')
+        setCopyFromProjectId(q.project_id ?? '')
+        const proj = Array.isArray(q.projects) ? q.projects[0] : q.projects
+        setCopyFromProjectName((proj as { name?: string } | null)?.name ?? '')
+        setNote(q.note ? `복사본 - ${q.note}` : '복사본')
+        if (q.rates && typeof q.rates === 'object') setRates(q.rates)
+        if (q.discount != null) setDiscount(Number(q.discount))
+      }
+
+      if (its && its.length > 0) {
+        const sorted = [...its].sort((a: any, b: any) => {
+          if (a.work_type === '설계비용') return -1
+          if (b.work_type === '설계비용') return 1
+          return WORK_ORDER.indexOf(a.work_type as WorkType) - WORK_ORDER.indexOf(b.work_type as WorkType)
+        })
+        setItems(sorted.map((t: any, idx: number) => ({
+          tempId: `copy_${t.id}_${idx}`,
+          work_type: t.work_type,
+          item_name: t.item_name,
+          comment: t.comment ?? '',
+          unit: t.unit,
+          quantity: t.quantity,
+          material_unit_price: t.material_unit_price ?? 0,
+          labor_unit_price: t.labor_unit_price ?? 0,
+          note: t.note ?? '',
+          sort_order: t.sort_order ?? idx,
+        })))
+      }
+
+      setLoadingTemplate(false)
+    }
+    loadCopy()
+  }, [])
+
   const grouped = WORK_ORDER
     .map(wt => ({ wt, items: items.filter(i => i.work_type === wt) }))
-    .filter(g => g.items.length > 0)
 
-  const unknownWts = [...new Set(items.filter(i => !WORK_ORDER.includes(i.work_type)).map(i => i.work_type))]
+  const unknownWts = [...new Set(items.filter(i => !WORK_ORDER.includes(i.work_type as WorkType)).map(i => i.work_type))]
   const allGrouped = [...grouped, ...unknownWts.map(wt => ({ wt, items: items.filter(i => i.work_type === wt) }))]
-
-  const summaryRows = allGrouped
-    .map(({ wt, items: gItems }) => {
-      const mat = gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0)
-      const lab = gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0)
-      return { wt, materialTotal: mat, laborTotal: lab, total: mat + lab }
-    })
-    .filter(r => r.total > 0)
-
-  const directMaterial = summaryRows.reduce((s, r) => s + r.materialTotal, 0)
-  const directLabor    = summaryRows.reduce((s, r) => s + r.laborTotal, 0)
-  const directTotal    = directMaterial + directLabor
-
-  const indirectAccident   = Math.round(directLabor * rates.accident / 100)
-  const indirectEmployment = Math.round(directLabor * rates.employment / 100)
-  const indirectOverhead   = Math.round(directTotal * rates.overhead / 100)
-  const indirectProfit     = Math.round(directTotal * rates.profit / 100)
-  const indirectTotal      = indirectAccident + indirectEmployment + indirectOverhead + indirectProfit
-  const vat                = Math.round(directTotal * rates.vat / 100)
-  const finalTotal         = directTotal + indirectTotal + vat + discount
 
   const loadFromTemplate = async () => {
     const sb = createClient()
@@ -326,20 +383,15 @@ function NewQuoteForm() {
 
   const handleSave = async () => {
     if (!projectId) { alert('프로젝트를 선택해주세요'); return }
-    setLoading(true)
-    const sb = createClient()
-    const { data: quote } = await sb.from('quotes').insert({
-      project_id: projectId,
-      quote_number: quoteVersion,
-      note,
-      status: '작성중',
-    }).select().single()
-    if (!quote) { setLoading(false); return }
+
+    // 복사 모드에서 원본과 동일한 프로젝트 선택 시 경고
+    if (copyFromId && projectId === copyFromProjectId) {
+      if (!confirm('같은 프로젝트에 복사합니다. 계속하시겠습니까?')) return
+    }
 
     const insertItems = items
       .filter(i => i.quantity > 0)
-      .map(i => ({
-        quote_id: quote.id,
+      .map((i, idx) => ({
         work_type: i.work_type,
         item_name: i.item_name,
         comment: i.comment,
@@ -348,37 +400,119 @@ function NewQuoteForm() {
         material_unit_price: i.material_unit_price,
         labor_unit_price: i.labor_unit_price,
         note: i.note,
+        sort_order: idx,
+        planned_execution_amount: null,
+        actual_execution_amount: null,
       }))
 
-    if (insertItems.length > 0) {
-      const { error: itemsError } = await sb.from('quote_items').insert(insertItems)
-      if (itemsError) {
-        console.error('quote_items 저장 실패:', itemsError)
-        alert('항목 저장 실패: ' + itemsError.message)
-        setLoading(false)
-        return
-      }
+    if (insertItems.length === 0) {
+      alert('수량이 입력된 항목이 없습니다. 최소 1개 이상 입력해주세요.')
+      return
     }
-    router.push(`/quotes/${quote.id}`)
+
+    setLoading(true)
+    const sb = createClient()
+
+    let quote = null
+    let quoteError = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const quoteNumber = await generateQuoteNumber(sb)
+      const { data, error } = await sb.from('quotes').insert({
+        project_id: projectId,
+        quote_number: quoteNumber,
+        quote_version: quoteVersion,
+        note,
+        status: '작성중',
+        min_profit_rate: minProfitRate,
+      }).select().single()
+      if (data) { quote = data; break }
+      quoteError = error
+      if ((error as any)?.code !== '23505') break
+    }
+
+    if (!quote) {
+      alert('견적서 저장 실패: ' + ((quoteError as any)?.message ?? '알 수 없는 오류'))
+      setLoading(false)
+      return
+    }
+
+    const { error: itemsError } = await sb.from('quote_items').insert(
+      insertItems.map(i => ({ quote_id: (quote as any).id, ...i }))
+    )
+    if (itemsError) {
+      console.error('quote_items 저장 실패:', itemsError)
+      alert('항목 저장 실패: ' + itemsError.message)
+      setLoading(false)
+      return
+    }
+    router.push(`/quotes/${(quote as any).id}`)
   }
+
+  const isSameProject = copyFromId && projectId === copyFromProjectId
 
   return (
     <div className="p-8">
       <h2 className="text-2xl font-bold text-gray-900 mb-6">새 견적서 작성</h2>
 
+      {/* 복사 모드 배너 */}
+      {copyFromId && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4 flex items-start gap-3">
+          <span className="text-xl leading-none mt-0.5">⚠️</span>
+          <div>
+            <p className="font-bold text-amber-800 text-sm">견적 복사 모드</p>
+            <p className="text-amber-700 text-xs mt-0.5">원본 견적의 모든 항목을 복사했습니다. 저장 전 아래에서 프로젝트를 반드시 확인하세요.</p>
+          </div>
+        </div>
+      )}
+
+      {/* 복사 모드 프로젝트 확인 섹션 (최상단 강조) */}
+      {copyFromId && (
+        <div className={`bg-white rounded-xl border-2 shadow-sm p-6 mb-4 ${isSameProject ? 'border-red-400' : 'border-green-400'}`}>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-sm font-bold text-gray-800">프로젝트 확인</p>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isSameProject ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+              {isSameProject ? '원본과 동일' : '변경됨'}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 mb-2">
+            원본 프로젝트: <span className="font-semibold text-gray-800">{copyFromProjectName || '(로딩 중...)'}</span>
+          </p>
+          <select
+            value={projectId}
+            onChange={e => setProjectId(e.target.value)}
+            className={`w-full border-2 rounded-lg px-3 py-2 text-sm focus:outline-none ${
+              isSameProject
+                ? 'border-red-400 focus:ring-2 focus:ring-red-300'
+                : 'border-green-400 focus:ring-2 focus:ring-green-300'
+            }`}
+          >
+            <option value="">프로젝트 선택</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <p className={`text-xs mt-2 font-medium ${isSameProject ? 'text-red-500' : 'text-green-600'}`}>
+            {isSameProject
+              ? '반드시 프로젝트를 확인하거나 변경하세요'
+              : '✅ 다른 프로젝트로 변경됐습니다'}
+          </p>
+        </div>
+      )}
+
       {/* 기본 정보 */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 mb-6">
         <h3 className="font-semibold text-gray-800 mb-4">기본 정보</h3>
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">프로젝트 *</label>
-            <select value={projectId} onChange={e => setProjectId(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">프로젝트 선택</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-          <div>
+          {/* 복사 모드가 아닐 때만 여기에 프로젝트 선택 표시 */}
+          {!copyFromId && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">프로젝트 *</label>
+              <select value={projectId} onChange={e => setProjectId(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">프로젝트 선택</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className={copyFromId ? 'col-span-2' : ''}>
             <label className="block text-sm font-medium text-gray-700 mb-1">메모</label>
             <input value={note} onChange={e => setNote(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -394,6 +528,18 @@ function NewQuoteForm() {
             <option value="2차견적">2차견적</option>
             <option value="3차견적">3차견적</option>
           </select>
+        </div>
+        <div className="flex items-center gap-4 mt-4">
+          <label className="text-sm font-medium text-gray-700 w-24">목표 이윤율</label>
+          <input
+            type="number"
+            value={minProfitRate}
+            onChange={e => setMinProfitRate(Number(e.target.value))}
+            min={0}
+            max={100}
+            className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+          <span className="text-sm text-gray-500">%</span>
         </div>
       </div>
 
@@ -432,123 +578,25 @@ function NewQuoteForm() {
 
       {/* 견적 합계표 */}
       {items.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-6 overflow-hidden">
-          <button
-            onClick={() => setSummaryOpen(v => !v)}
-            className="w-full px-5 py-3 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors border-b border-gray-200"
-          >
-            <span className="font-bold text-gray-900 text-sm">견적 합계표</span>
-            <ChevronDown size={16} className={`text-gray-400 transition-transform duration-200 ${summaryOpen ? '' : '-rotate-90'}`} />
-          </button>
-
-          {summaryOpen && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[720px]">
-                <thead>
-                  <tr className="bg-gray-800 text-white">
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold w-12">번호</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold">명 칭</th>
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold w-14">단위</th>
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold w-14">수량</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold w-36">재료비 금액</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold w-36">노무비 금액</th>
-                    <th className="px-4 py-2.5 text-right text-xs font-semibold w-36">합계 금액</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  <tr className="bg-blue-50">
-                    <td colSpan={7} className="px-4 py-2 text-xs font-bold text-blue-800 tracking-wide">■ 직접공사비</td>
-                  </tr>
-                  {summaryRows.map((row, idx) => (
-                    <tr key={row.wt} className="hover:bg-blue-50 transition-colors">
-                      <td className="px-4 py-2 text-xs text-gray-400 text-center">{idx + 1}</td>
-                      <td className="px-4 py-2">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${colorOf(row.wt)}`}>{row.wt}</span>
-                      </td>
-                      <td className="px-4 py-2 text-xs text-gray-400 text-center">식</td>
-                      <td className="px-4 py-2 text-xs text-gray-500 text-center">1</td>
-                      <td className="px-4 py-2 text-xs text-blue-700 text-right">{fmt(row.materialTotal)}</td>
-                      <td className="px-4 py-2 text-xs text-amber-700 text-right">{fmt(row.laborTotal)}</td>
-                      <td className="px-4 py-2 text-xs text-gray-800 font-semibold text-right">{fmt(row.total)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-gray-100">
-                    <td colSpan={4} className="px-4 py-2.5 text-xs font-bold text-gray-800">직접공사비 합계</td>
-                    <td className="px-4 py-2.5 text-xs text-blue-800 font-bold text-right">{fmt(directMaterial)}</td>
-                    <td className="px-4 py-2.5 text-xs text-amber-800 font-bold text-right">{fmt(directLabor)}</td>
-                    <td className="px-4 py-2.5 text-xs text-gray-900 font-bold text-right">{fmt(directTotal)}</td>
-                  </tr>
-                  <tr className="bg-orange-50">
-                    <td colSpan={7} className="px-4 py-2 text-xs font-bold text-orange-800 tracking-wide">■ 간접공사비</td>
-                  </tr>
-                  {([
-                    { label: '산재보험료', base: '노무비', key: 'accident' as const, val: indirectAccident, step: '0.01' },
-                    { label: '고용보험료', base: '노무비', key: 'employment' as const, val: indirectEmployment, step: '0.01' },
-                    { label: '공과잡비', base: '직접공사비', key: 'overhead' as const, val: indirectOverhead, step: '0.1' },
-                    { label: '기업이윤', base: '직접공사비', key: 'profit' as const, val: indirectProfit, step: '0.1' },
-                  ]).map(({ label, base, key, val, step }) => (
-                    <tr key={key} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
-                      <td className="px-4 py-2 text-xs text-gray-700">
-                        {label} ({base} ×{' '}
-                        <input type="number" value={rates[key]}
-                          onChange={e => setRates(r => ({ ...r, [key]: Number(e.target.value) }))}
-                          className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
-                          step={step} />
-                        %)
-                      </td>
-                      <td className="px-4 py-2 text-xs text-gray-400 text-center">식</td>
-                      <td className="px-4 py-2 text-xs text-gray-400 text-center">1</td>
-                      <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                      <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                      <td className="px-4 py-2 text-xs text-gray-700 text-right">{fmt(val)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-gray-100">
-                    <td colSpan={6} className="px-4 py-2.5 text-xs font-bold text-gray-800">간접공사비 합계</td>
-                    <td className="px-4 py-2.5 text-xs text-gray-900 font-bold text-right">{fmt(indirectTotal)}</td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
-                    <td className="px-4 py-2 text-xs text-gray-700">
-                      부가세 (직접공사비 ×{' '}
-                      <input type="number" value={rates.vat}
-                        onChange={e => setRates(r => ({ ...r, vat: Number(e.target.value) }))}
-                        className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
-                        step="0.1" />
-                      %)
-                    </td>
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center">식</td>
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center">1</td>
-                    <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                    <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                    <td className="px-4 py-2 text-xs text-gray-700 font-medium text-right">{fmt(vat)}</td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
-                    <td className="px-4 py-2 text-xs text-gray-700">단수할인 <span className="text-gray-400">(음수 입력 시 차감)</span></td>
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center">식</td>
-                    <td className="px-4 py-2 text-xs text-gray-400 text-center">1</td>
-                    <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                    <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
-                    <td className="px-4 py-2 text-right">
-                      <input type="number" value={discount} onChange={e => setDiscount(Number(e.target.value))}
-                        className="w-full text-xs text-right text-gray-700 font-medium border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white" />
-                    </td>
-                  </tr>
-                  <tr className="bg-gray-900">
-                    <td colSpan={6} className="px-4 py-3.5 text-sm font-bold text-white">최종 합계</td>
-                    <td className="px-4 py-3.5 text-sm font-bold text-white text-right">{fmt(finalTotal)} 원</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <QuoteSummaryTable
+          items={items}
+          rates={rates}
+          discount={discount}
+          open={summaryOpen}
+          onToggle={() => setSummaryOpen(v => !v)}
+          isEditable={true}
+          isContract={false}
+          onRateChange={(key, value) => setRates(r => ({ ...r, [key]: value }))}
+          onDiscountChange={setDiscount}
+        />
       )}
 
       {/* 공종별 그룹 테이블 */}
-      {items.length === 0 ? (
+      {loadingTemplate ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-16 text-center mb-6">
+          <p className="text-gray-400">{copyFromId ? '원본 견적 불러오는 중...' : '기본 포맷 불러오는 중...'}</p>
+        </div>
+      ) : items.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-16 text-center mb-6">
           <p className="text-gray-400">평형대를 선택하고 <strong>기본 포맷 불러오기</strong>를 클릭하세요.</p>
         </div>
@@ -621,7 +669,7 @@ function NewQuoteForm() {
 
       {/* 저장 버튼 */}
       <div className="flex gap-3">
-        <button onClick={handleSave} disabled={loading}
+        <button onClick={handleSave} disabled={loading || loadingTemplate || !projectId}
           className="bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
           {loading ? '저장중...' : '견적서 저장'}
         </button>

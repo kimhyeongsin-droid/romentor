@@ -1,30 +1,41 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { Plus, Trash2 } from 'lucide-react'
+import { Copy, Plus, Trash2, X } from 'lucide-react'
 import { formatKRW } from '@/lib/utils'
 
-const STATUS_LABEL: Record<string, string> = { '작성중': '작성중', '배포완료': '배포완료' }
-const STATUS_COLOR: Record<string, string> = {
-  '작성중': 'bg-blue-100 text-blue-700',
-  '배포완료': 'bg-green-100 text-green-700',
-}
-
 export default function QuotesPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const projectId = searchParams.get('projectId')
+
   const [quotes, setQuotes] = useState<any[]>([])
+  const [projectName, setProjectName] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
 
   async function load() {
-    const { data } = await createClient()
+    let query = createClient()
       .from('quotes')
-      .select('*, projects(name, client_name, manager_name)')
+      .select('id, quote_number, quote_version, status, total_quote_amount, total_execution_amount, total_profit, total_profit_rate, note, updated_at, projects(name, client_name, manager_name)')
       .order('created_at', { ascending: false })
+
+    if (projectId) {
+      query = query.eq('project_id', projectId)
+    }
+
+    const { data } = await query
     setQuotes(data ?? [])
+
+    if (projectId && data && data.length > 0) {
+      const proj = data[0].projects
+      setProjectName(((Array.isArray(proj) ? proj[0] : proj) as { name?: string } | null)?.name ?? null)
+    }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [projectId])
 
   async function deleteQuote(id: string, number: string) {
     if (!confirm(`"${number}" 견적서를 삭제하시겠습니까?`)) return
@@ -41,59 +52,119 @@ export default function QuotesPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">견적 관리</h2>
-          <p className="text-gray-500 text-sm mt-1">총 {quotes.length}건</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-gray-500 text-sm">총 {quotes.length}건</p>
+            {projectId && projectName && (
+              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
+                {projectName}
+                <button
+                  onClick={() => router.push('/quotes')}
+                  className="ml-0.5 hover:text-blue-900"
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            )}
+            {projectId && !projectName && (
+              <button
+                onClick={() => router.push('/quotes')}
+                className="text-xs text-gray-400 hover:text-gray-600 underline"
+              >
+                전체 보기
+              </button>
+            )}
+          </div>
         </div>
-        <Link href="/quotes/new" className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
+        <Link
+          href={projectId ? `/quotes/new?projectId=${projectId}` : '/quotes/new'}
+          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+        >
           <Plus size={16} /> 새 견적
         </Link>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm table-fixed">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
-              {['견적번호', '프로젝트', '고객', '담당자', '견적금액', '실행금액', '이윤', '이윤율', '상태', ''].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-              ))}
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-[130px]">견적번호</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-[180px]">프로젝트</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-[76px]">고객</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-[76px]">담당자</th>
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-[100px]">견적금액</th>
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-[100px]">실행금액</th>
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-[92px]">이윤</th>
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-[56px]">이윤율</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-[120px]">상태</th>
+              <th className="px-3 py-2.5 w-[82px]"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {quotes.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-12 text-center text-gray-400">견적이 없습니다.</td></tr>
+              <tr><td colSpan={10} className="px-3 py-12 text-center text-gray-400">견적이 없습니다.</td></tr>
             )}
             {quotes.map((q) => (
               <tr key={q.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono text-xs text-gray-600">{q.quote_number}</td>
-                <td className="px-4 py-3 font-medium text-gray-900">{q.projects?.name}</td>
-                <td className="px-4 py-3 text-gray-600">{q.projects?.client_name}</td>
-                <td className="px-4 py-3 text-gray-600">{q.projects?.manager_name}</td>
-                <td className="px-4 py-3 text-right font-medium">{formatKRW(q.total_quote_amount)}</td>
-                <td className="px-4 py-3 text-right">{formatKRW(q.total_execution_amount)}</td>
-                <td className={`px-4 py-3 text-right font-semibold ${Number(q.total_profit) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                <td className="px-3 py-2.5 overflow-hidden">
+                  <div className="font-mono text-xs text-gray-600 truncate">{q.quote_number}</div>
+                  {q.updated_at && (
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {new Date(q.updated_at).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 overflow-hidden">
+                  <div className="text-sm font-medium text-gray-900 truncate" title={q.projects?.name}>
+                    {q.projects?.name}
+                  </div>
+                  {q.note && (
+                    <div className="text-xs text-gray-400 mt-0.5 truncate" title={q.note}>
+                      💬 {q.note}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
+                  <div className="truncate">{q.projects?.client_name}</div>
+                </td>
+                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
+                  <div className="truncate">{q.projects?.manager_name}</div>
+                </td>
+                <td className="px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap">{formatKRW(q.total_quote_amount)}</td>
+                <td className="px-3 py-2.5 text-right text-xs whitespace-nowrap">{formatKRW(q.total_execution_amount)}</td>
+                <td className={`px-3 py-2.5 text-right text-xs font-semibold whitespace-nowrap ${Number(q.total_profit) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                   {formatKRW(q.total_profit)}
                 </td>
-                <td className={`px-4 py-3 text-right font-semibold ${Number(q.total_profit_rate) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                <td className={`px-3 py-2.5 text-right text-xs font-semibold whitespace-nowrap ${Number(q.total_profit_rate) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                   {q.total_profit_rate}%
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    {q.quote_number && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
-                        {q.quote_number}
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {q.quote_version && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium whitespace-nowrap">
+                        {q.quote_version}
                       </span>
                     )}
-                    {q.status === '배포완료'
-                      ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">배포완료</span>
-                      : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">작성중</span>
+                    {q.status === '계약견적서'
+                      ? <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium whitespace-nowrap">계약견적서</span>
+                      : q.status === '배포완료'
+                      ? <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium whitespace-nowrap">배포완료</span>
+                      : <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium whitespace-nowrap">작성중</span>
                     }
                   </div>
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  <div className="flex items-center gap-1">
                     <Link href={`/quotes/${q.id}`} className="text-blue-600 hover:underline text-xs">상세</Link>
+                    <button
+                      onClick={() => router.push(`/quotes/new?copyFrom=${q.id}`)}
+                      title="견적 복사"
+                      className="text-gray-400 hover:text-blue-600"
+                    >
+                      <Copy size={12} />
+                    </button>
                     <button onClick={() => deleteQuote(q.id, q.quote_number)} disabled={deleting === q.id}
                       className="text-red-400 hover:text-red-600 disabled:opacity-40">
-                      {deleting === q.id ? '...' : <Trash2 size={13} />}
+                      {deleting === q.id ? '...' : <Trash2 size={12} />}
                     </button>
                   </div>
                 </td>

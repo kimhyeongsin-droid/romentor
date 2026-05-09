@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { WORK_TYPES, WORK_TYPE_COLOR, type WorkType, type UnitPrice } from '@/types'
+import { WORK_TYPE_COLOR, type WorkType, type UnitPrice } from '@/types'
 import { Plus, Pencil, Trash2, Save, X, Lock, Unlock } from 'lucide-react'
 
 const PASSWORD = 'romentor2024'
