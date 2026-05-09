@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
 
@@ -39,6 +40,7 @@ const fmt = (n: number) => n.toLocaleString()
 export default function QuoteSummaryTable({
   items, rates, discount, open, onToggle, isEditable, isContract, minProfitRate, onRateChange, onDiscountChange,
 }: Props) {
+  const [rawDiscount, setRawDiscount] = useState<string | null>(null)
   // 공종별 집계 (실행금액 포함)
   const summaryRows = WORK_ORDER.map(wt => {
     const wtItems = items.filter(i => i.work_type === wt)
@@ -190,7 +192,7 @@ export default function QuoteSummaryTable({
                 { label: '고용보험료', base: '노무비', key: 'employment' as const, val: indirectEmployment, step: '0.01' },
                 { label: '공과잡비', base: '직접공사비', key: 'overhead' as const, val: indirectOverhead, step: '0.1' },
                 { label: '기업이윤', base: '직접공사비', key: 'profit' as const, val: indirectProfit, step: '0.1' },
-              ]).map(({ label, base, key, val, step }) => (
+              ]).filter(({ key }) => isContract || key !== 'profit').map(({ label, base, key, val, step }) => (
                 <tr key={key} className="hover:bg-gray-50">
                   <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
                   <td className="px-4 py-2 text-xs text-gray-700">
@@ -262,8 +264,25 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
                 <td className="px-4 py-2 text-right">
                   {isEditable ? (
-                    <input type="number" value={discount} onChange={e => onDiscountChange(Number(e.target.value))}
-                      className="w-full text-xs text-right text-gray-700 font-medium border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white" />
+                    <input
+                      type="text"
+                      value={rawDiscount ?? String(discount)}
+                      onFocus={e => { setRawDiscount(String(discount)); e.target.select() }}
+                      onChange={e => {
+                        const v = e.target.value
+                        if (v !== '' && v !== '-' && !/^-?\d+$/.test(v)) return
+                        setRawDiscount(v)
+                        if (v === '' || v === '-') return
+                        onDiscountChange(Number(v))
+                      }}
+                      onBlur={() => {
+                        if (rawDiscount !== null) {
+                          onDiscountChange(rawDiscount === '' || rawDiscount === '-' ? 0 : Number(rawDiscount))
+                        }
+                        setRawDiscount(null)
+                      }}
+                      className="w-full text-xs text-right text-gray-700 font-medium border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white"
+                    />
                   ) : (
                     <span className="text-xs text-gray-700">{fmt(discount)}</span>
                   )}

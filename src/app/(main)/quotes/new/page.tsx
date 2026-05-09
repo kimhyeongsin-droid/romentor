@@ -146,7 +146,6 @@ function NewQuoteForm() {
   const [summaryOpen, setSummaryOpen] = useState(true)
   const [discount, setDiscount] = useState(0)
   const [rates, setRates] = useState(DEFAULT_RATES)
-  const [minProfitRate, setMinProfitRate] = useState<number>(15)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -154,16 +153,10 @@ function NewQuoteForm() {
   useEffect(() => {
     createClient()
       .from('projects')
-      .select('id, name, min_profit_rate')
+      .select('id, name')
       .order('created_at', { ascending: false })
       .then(({ data }) => setProjects(data ?? []))
   }, [])
-
-  useEffect(() => {
-    if (!projectId || projects.length === 0) return
-    const p = projects.find(proj => proj.id === projectId)
-    if (p?.min_profit_rate != null) setMinProfitRate(p.min_profit_rate)
-  }, [projectId, projects])
 
   // 기본 포맷 자동 로드 (복사 모드에서는 스킵)
   useEffect(() => {
@@ -422,7 +415,6 @@ function NewQuoteForm() {
         note,
         status: '작성중',
         type: '견적',
-        min_profit_rate: minProfitRate,
       }).select().single()
       if (data) { quote = data; break }
       quoteError = error
@@ -517,18 +509,6 @@ function NewQuoteForm() {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="참고 사항" />
           </div>
-        </div>
-        <div className="flex items-center gap-4 mt-4">
-          <label className="text-sm font-medium text-gray-700 w-24">목표 이윤율</label>
-          <input
-            type="number"
-            value={minProfitRate}
-            onChange={e => setMinProfitRate(Number(e.target.value))}
-            min={0}
-            max={100}
-            className="w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-          />
-          <span className="text-sm text-gray-500">%</span>
         </div>
       </div>
 

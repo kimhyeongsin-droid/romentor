@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
 import { generateQuoteNumber } from '@/lib/utils'
-import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send, Pencil } from 'lucide-react'
+import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
@@ -210,8 +210,6 @@ export default function QuoteDetailPage() {
   const [rates, setRates] = useState(DEFAULT_RATES)
   const [printMode, setPrintMode] = useState<null | 'client' | 'internal'>(null)
   const [minProfitRate, setMinProfitRate] = useState<number | null>(null)
-  const [editingRate, setEditingRate] = useState(false)
-  const [rateInputVal, setRateInputVal] = useState('')
 
   useEffect(() => {
     if (!printMode) return
@@ -234,9 +232,7 @@ export default function QuoteDetailPage() {
     ]).then(([{ data: q }, { data: its }]) => {
       setQuote(q)
       if (q) {
-        const rate = q.min_profit_rate ?? q.projects?.min_profit_rate ?? null
-        setMinProfitRate(rate)
-        setRateInputVal(rate !== null ? String(rate) : '')
+        setMinProfitRate(q.min_profit_rate ?? q.projects?.min_profit_rate ?? null)
       }
       if (its) {
         const sorted = [...its].sort((a, b) => {
@@ -430,14 +426,6 @@ export default function QuoteDetailPage() {
     }
   }
 
-  const saveMinProfitRate = async (val: number | null) => {
-    const safeVal = val !== null && isFinite(val) ? val : null
-    await createClient().from('quotes').update({ min_profit_rate: safeVal }).eq('id', id)
-    setMinProfitRate(safeVal)
-    setRateInputVal(safeVal !== null ? String(safeVal) : '')
-    setEditingRate(false)
-  }
-
   const handleDeploy = async () => {
     if (!confirm('배포하면 이 견적서는 수정이 불가능합니다. 배포하시겠습니까?')) return
     await createClient().from('quotes').update({ status: '배포' }).eq('id', id)
@@ -497,12 +485,6 @@ export default function QuoteDetailPage() {
 
   const fmt = (n: number) => n.toLocaleString()
 
-  const _totalQuote = items.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
-  const _totalPlanned = items.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
-  const plannedProfitRate = _totalQuote > 0 && _totalPlanned > 0
-    ? ((_totalQuote - _totalPlanned) / _totalQuote) * 100
-    : null
-
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
 
   const statusBadgeClass = QUOTE_STATUS_COLOR[quote?.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'
@@ -521,47 +503,6 @@ export default function QuoteDetailPage() {
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadgeClass}`}>
                 {quote?.status}
               </span>
-              {editingRate ? (
-                <span className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    value={rateInputVal}
-                    onChange={e => setRateInputVal(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        const v = rateInputVal.trim()
-                        saveMinProfitRate(v === '' ? null : Number(v))
-                      }
-                      if (e.key === 'Escape') setEditingRate(false)
-                    }}
-                    onBlur={() => {
-                      const v = rateInputVal.trim()
-                      saveMinProfitRate(v === '' ? null : Number(v))
-                    }}
-                    autoFocus
-                    className="w-16 text-xs text-center border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                  />
-                  <span className="text-xs text-gray-400">%</span>
-                </span>
-              ) : (
-                <button
-                  onClick={() => { setRateInputVal(minProfitRate !== null ? String(minProfitRate) : ''); setEditingRate(true) }}
-                  title="클릭하여 목표 이윤율 수정"
-                  className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 hover:opacity-80 transition-opacity ${
-                    minProfitRate === null
-                      ? 'bg-gray-100 text-gray-400'
-                      : plannedProfitRate === null
-                      ? 'bg-gray-100 text-gray-500'
-                      : plannedProfitRate >= minProfitRate
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-red-100 text-red-700'
-                  }`}
-                >
-                  <Pencil size={10} />
-                  {minProfitRate !== null ? `목표 ${minProfitRate}%` : '목표 설정'}
-                  {minProfitRate !== null && plannedProfitRate !== null && ` / 예상 ${plannedProfitRate.toFixed(1)}%`}
-                </button>
-              )}
             </div>
             <p className="text-sm text-gray-400 mt-0.5">
               {quote?.note && <span className="mr-3">{quote.note}</span>}
