@@ -137,7 +137,6 @@ function NewQuoteForm() {
   const [projectId, setProjectId] = useState(searchParams.get('projectId') ?? '')
   const [copyFromProjectId, setCopyFromProjectId] = useState('')
   const [copyFromProjectName, setCopyFromProjectName] = useState('')
-  const [quoteVersion, setQuoteVersion] = useState('가견적')
   const [note, setNote] = useState('')
   const [items, setItems] = useState<QuoteItem[]>([])
   const [sizeCategory, setSizeCategory] = useState('50평대')
@@ -420,9 +419,9 @@ function NewQuoteForm() {
       const { data, error } = await sb.from('quotes').insert({
         project_id: projectId,
         quote_number: quoteNumber,
-        quote_version: quoteVersion,
         note,
         status: '작성중',
+        type: '견적',
         min_profit_rate: minProfitRate,
       }).select().single()
       if (data) { quote = data; break }
@@ -513,21 +512,11 @@ function NewQuoteForm() {
             </div>
           )}
           <div className={copyFromId ? 'col-span-2' : ''}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">메모</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">파일명</label>
             <input value={note} onChange={e => setNote(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="참고 사항" />
           </div>
-        </div>
-        <div className="flex items-center gap-4 mt-4">
-          <label className="text-sm font-medium text-gray-700 w-24">견적 구분 *</label>
-          <select value={quoteVersion} onChange={e => setQuoteVersion(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="가견적">가견적</option>
-            <option value="1차견적">1차견적</option>
-            <option value="2차견적">2차견적</option>
-            <option value="3차견적">3차견적</option>
-          </select>
         </div>
         <div className="flex items-center gap-4 mt-4">
           <label className="text-sm font-medium text-gray-700 w-24">목표 이윤율</label>

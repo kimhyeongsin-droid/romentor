@@ -7,3 +7,24 @@ export const DEFAULT_RATES: Rates = {
   profit: 15,
   vat: 10,
 }
+
+export const QUOTE_STATUS = {
+  DRAFT: '작성중',
+  DEPLOYED: '배포',
+  CONTRACT: '계약',
+  SETTLEMENT: '정산',
+} as const
+
+export type QuoteStatus = typeof QUOTE_STATUS[keyof typeof QUOTE_STATUS]
+
+export const QUOTE_STATUS_COLOR: Record<QuoteStatus, string> = {
+  작성중: 'bg-blue-100 text-blue-700',
+  배포: 'bg-purple-100 text-purple-700',
+  계약: 'bg-green-100 text-green-700',
+  정산: 'bg-orange-100 text-orange-700',
+}
+
+export const READONLY_STATUSES: QuoteStatus[] = ['배포', '계약']
+
+export const isReadonly = (status: string) =>
+  READONLY_STATUSES.includes(status as QuoteStatus)

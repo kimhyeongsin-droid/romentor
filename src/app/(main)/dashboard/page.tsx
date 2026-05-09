@@ -65,7 +65,7 @@ export default function DashboardPage() {
       const [{ data: quotesData }, { data: alertsData }] = await Promise.all([
         sb.from('quotes')
           .select('id, project_id, quote_number, note, total_quote_amount, total_profit, total_profit_rate, payment_due_date, created_at, projects(id, name)')
-          .eq('status', '계약견적서')
+          .eq('type', '정산')
           .order('created_at', { ascending: false }),
         sb.from('sms_alerts')
           .select('id, quote_id, message, sent_at, status, type, quotes(note)')

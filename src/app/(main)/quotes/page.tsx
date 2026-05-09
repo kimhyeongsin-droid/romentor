@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { Copy, Plus, Trash2, X } from 'lucide-react'
 import { formatKRW } from '@/lib/utils'
+import { QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
 
 function QuotesContent() {
   const router = useRouter()
@@ -19,7 +20,7 @@ function QuotesContent() {
   async function load() {
     let query = createClient()
       .from('quotes')
-      .select('id, quote_number, quote_version, status, total_quote_amount, total_execution_amount, total_profit, total_profit_rate, note, updated_at, projects(name, client_name, manager_name)')
+      .select('id, quote_number, type, status, total_quote_amount, total_execution_amount, total_profit, total_profit_rate, note, updated_at, projects(name, client_name, manager_name)')
       .order('created_at', { ascending: false })
 
     if (projectId) {
@@ -118,8 +119,11 @@ function QuotesContent() {
                     {q.projects?.name}
                   </div>
                   {q.note && (
-                    <div className="text-xs text-gray-400 mt-0.5 truncate" title={q.note}>
-                      💬 {q.note}
+                    <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
+                      <span className="truncate" title={q.note}>💬 {q.note}</span>
+                      {q.type === '정산' && (
+                        <span className="flex-shrink-0 px-1 py-0.5 rounded bg-orange-100 text-orange-700 font-medium">정산</span>
+                      )}
                     </div>
                   )}
                 </td>
@@ -138,19 +142,9 @@ function QuotesContent() {
                   {q.total_profit_rate}%
                 </td>
                 <td className="px-3 py-2.5">
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {q.quote_version && (
-                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium whitespace-nowrap">
-                        {q.quote_version}
-                      </span>
-                    )}
-                    {q.status === '계약견적서'
-                      ? <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium whitespace-nowrap">계약견적서</span>
-                      : q.status === '배포완료'
-                      ? <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium whitespace-nowrap">배포완료</span>
-                      : <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium whitespace-nowrap">작성중</span>
-                    }
-                  </div>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${QUOTE_STATUS_COLOR[q.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {q.status}
+                  </span>
                 </td>
                 <td className="px-3 py-2.5 whitespace-nowrap">
                   <div className="flex items-center gap-1">

@@ -4,8 +4,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
-import { DEFAULT_RATES } from '@/lib/quoteConstants'
-import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send, RotateCcw, Pencil } from 'lucide-react'
+import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
+import { generateQuoteNumber } from '@/lib/utils'
+import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send, Pencil } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
@@ -35,13 +36,13 @@ interface QuoteItem {
 interface SortableItemRowProps {
   item: QuoteItem
   isEditable: boolean
-  isContract: boolean
+  isSettlement: boolean
   upd: (id: string, key: keyof QuoteItem, value: any) => void
   del: (id: string) => void
   addItemAt: (workType: string, afterId: string) => void
 }
 
-const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isContract, upd, del, addItemAt }: SortableItemRowProps) {
+const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isSettlement, upd, del, addItemAt }: SortableItemRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
   const itemNameRef = useRef<HTMLTextAreaElement>(null)
@@ -68,7 +69,7 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
   const isMinus = profit !== null && profit < 0
 
   return (
-    <tr ref={setNodeRef} style={style} className={`group hover:bg-gray-50 ${isContract && isMinus ? 'bg-red-50 border-l-2 border-red-400' : ''}`}>
+    <tr ref={setNodeRef} style={style} className={`group hover:bg-gray-50 ${isSettlement && isMinus ? 'bg-red-50 border-l-2 border-red-400' : ''}`}>
       <td className="px-3 py-1.5 align-top flex items-start gap-1">
         {isEditable && (
           <>
@@ -150,7 +151,7 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
       <td className="px-3 py-1.5 text-right text-xs font-semibold text-amber-700 bg-amber-50/40">{fmt(lab)}</td>
       <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-600">{fmt(item.material_unit_price + item.labor_unit_price)}</td>
       <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700">{fmt(mat + lab)}</td>
-      {isContract && (
+      {isSettlement && (
         <>
           <td className="internal-only px-3 py-1.5">
             <input type="text"
@@ -211,10 +212,6 @@ export default function QuoteDetailPage() {
   const [minProfitRate, setMinProfitRate] = useState<number | null>(null)
   const [editingRate, setEditingRate] = useState(false)
   const [rateInputVal, setRateInputVal] = useState('')
-  const [contractUnlocked, setContractUnlocked] = useState(false)
-  const [showPasswordModal, setShowPasswordModal] = useState(false)
-  const [passwordInput, setPasswordInput] = useState('')
-  const [passwordError, setPasswordError] = useState(false)
 
   useEffect(() => {
     if (!printMode) return
@@ -226,9 +223,8 @@ export default function QuoteDetailPage() {
   }, [printMode])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
-  const isContract = quote?.status === '계약견적서'
-  const isEditable = quote?.status === '작성중'
-  const isContractEditable = isContract && contractUnlocked
+  const isSettlement = quote?.type === '정산'
+  const isEditable = quote ? !checkReadonly(quote.status) : false
 
   useEffect(() => {
     const sb = createClient()
@@ -329,16 +325,8 @@ export default function QuoteDetailPage() {
     setSaving(true)
     try {
       const sb = createClient()
-      const currentStatus = quote?.status
-      console.log('[handleSave] status:', currentStatus, '| isContract:', isContract, '| contractUnlocked:', contractUnlocked)
-      console.log('[handleSave] items sample:', JSON.stringify(items.slice(0, 2).map(i => ({
-        id: i.id,
-        item_name: i.item_name,
-        planned_execution_amount: i.planned_execution_amount,
-        actual_execution_amount: i.actual_execution_amount,
-      }))))
-      if (currentStatus === '계약견적서') {
 
+      if (isSettlement) {
         const results = await Promise.all(items.map((item, idx) => {
           const effectiveExec = (item.actual_execution_amount ?? 0) > 0
             ? item.actual_execution_amount!
@@ -358,17 +346,6 @@ export default function QuoteDetailPage() {
           }).eq('id', item.id)
         }))
 
-        results.forEach((r, idx) => {
-          if (r.error) {
-            console.error(`[handleSave] item[${idx}] id=${items[idx]?.id} 저장 실패:`, {
-              code: r.error.code,
-              message: r.error.message,
-              details: r.error.details,
-              hint: r.error.hint,
-            })
-          }
-        })
-
         const failed = results.filter(r => r.error)
         if (failed.length > 0) {
           alert(`❌ 저장 실패: ${failed[0].error?.message ?? '알 수 없는 오류'}`)
@@ -384,9 +361,8 @@ export default function QuoteDetailPage() {
         }, 0)
         if (totalExec > 0 && totalQuote > 0) {
           const currentRate = ((totalQuote - totalExec) / totalQuote) * 100
-          const minRate: number | null = minProfitRate
           const smsAlerts: Promise<Response>[] = []
-          if (minRate !== null && currentRate < minRate) {
+          if (minProfitRate !== null && currentRate < minProfitRate) {
             smsAlerts.push(fetch('/api/sms', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -422,7 +398,6 @@ export default function QuoteDetailPage() {
           }
         }
       } else {
-        console.log('[handleSave] else branch — status is not 계약견적서')
         const results = await Promise.all(items.map((item, idx) =>
           sb.from('quote_items').update({
             item_name: item.item_name,
@@ -448,22 +423,10 @@ export default function QuoteDetailPage() {
 
       setSaving(false)
       alert('✅ 저장됐습니다.')
-      if (isContract) setContractUnlocked(false)
     } catch (err) {
       console.error('저장 중 예외:', err)
       alert('❌ 저장 중 오류가 발생했습니다.')
       setSaving(false)
-    }
-  }
-
-  const handlePasswordConfirm = () => {
-    if (passwordInput === (process.env.NEXT_PUBLIC_CONTRACT_PASSWORD ?? '1234')) {
-      setContractUnlocked(true)
-      setShowPasswordModal(false)
-      setPasswordInput('')
-      setPasswordError(false)
-    } else {
-      setPasswordError(true)
     }
   }
 
@@ -475,49 +438,62 @@ export default function QuoteDetailPage() {
     setEditingRate(false)
   }
 
-  const handlePublish = async () => {
-    if (!confirm('이 견적서를 배포하시겠습니까?\n배포 후에는 수정이 불가능합니다.')) return
-    await createClient().from('quotes').update({ status: '배포완료' }).eq('id', id)
-    setQuote((prev: any) => ({ ...prev, status: '배포완료' }))
-    alert('✅ 견적서가 배포됐습니다.')
-  }
-
-  const handleUnpublish = async () => {
-    if (!confirm('배포된 견적서를 다시 작성중으로 변경할까요?')) return
-    await createClient().from('quotes').update({ status: '작성중' }).eq('id', id)
-    setQuote((prev: any) => ({ ...prev, status: '작성중' }))
+  const handleDeploy = async () => {
+    if (!confirm('배포하면 이 견적서는 수정이 불가능합니다. 배포하시겠습니까?')) return
+    await createClient().from('quotes').update({ status: '배포' }).eq('id', id)
+    setQuote((prev: any) => ({ ...prev, status: '배포' }))
   }
 
   const handleContract = async () => {
-    if (!confirm('이 견적서를 계약견적서로 확정하시겠습니까?\n계약견적서는 수정이 불가능합니다.')) return
+    if (!confirm('계약 처리하면 이 견적서는 수정이 불가능합니다. 계약 처리하시겠습니까?')) return
+    await createClient().from('quotes').update({ status: '계약' }).eq('id', id)
+    setQuote((prev: any) => ({ ...prev, status: '계약' }))
+  }
+
+  const handleCreateSettlement = async () => {
+    if (!confirm('계약 견적서를 복사해서 정산견적서를 생성합니다. 진행하시겠습니까?')) return
     const sb = createClient()
-    if (minProfitRate !== null) {
-      const toUpdate = items.filter(i => !(i.planned_execution_amount != null && i.planned_execution_amount > 0))
-      if (toUpdate.length > 0) {
-        await Promise.all(toUpdate.map(item => {
-          const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
-          const planned = Math.round(quoteAmt * (1 - minProfitRate / 100))
-          return sb.from('quote_items').update({
-            planned_execution_amount: planned,
-            execution_amount: planned,
-          }).eq('id', item.id)
-        }))
-        setItems(prev => prev.map(item => {
-          if (item.planned_execution_amount != null && item.planned_execution_amount > 0) return item
-          const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
-          const planned = Math.round(quoteAmt * (1 - minProfitRate / 100))
-          return { ...item, planned_execution_amount: planned, execution_amount: planned }
-        }))
-      }
+    let newQuote: any = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const quoteNumber = await generateQuoteNumber(sb)
+      const { data, error } = await sb.from('quotes').insert({
+        project_id: quote.project_id,
+        quote_number: quoteNumber,
+        status: '정산',
+        type: '정산',
+        note: '정산견적서',
+        min_profit_rate: quote.min_profit_rate,
+      }).select().single()
+      if (data) { newQuote = data; break }
+      if ((error as any)?.code !== '23505') break
     }
-    await sb.from('quotes').update({ status: '계약견적서' }).eq('id', id)
-    setQuote((prev: any) => ({ ...prev, status: '계약견적서' }))
-    alert('✅ 계약견적서로 확정됐습니다.')
+    if (!newQuote) { alert('정산견적서 생성 실패'); return }
+
+    const { data: srcItems } = await sb.from('quote_items').select('*').eq('quote_id', id)
+    if (srcItems && srcItems.length > 0) {
+      await sb.from('quote_items').insert(
+        srcItems.map(item => ({
+          quote_id: newQuote.id,
+          work_type: item.work_type,
+          item_name: item.item_name,
+          comment: item.comment,
+          unit: item.unit,
+          quantity: item.quantity,
+          material_unit_price: item.material_unit_price,
+          labor_unit_price: item.labor_unit_price,
+          note: item.note,
+          sort_order: item.sort_order,
+          planned_execution_amount: item.planned_execution_amount,
+          actual_execution_amount: item.actual_execution_amount,
+        }))
+      )
+    }
+    router.push('/quotes/' + newQuote.id)
   }
 
   const grouped = WORK_ORDER
     .map(wt => ({ wt, items: items.filter(i => i.work_type === wt) }))
-    .filter(g => isEditable || isContractEditable || g.items.length > 0)
+    .filter(g => isEditable || g.items.length > 0)
 
   const fmt = (n: number) => n.toLocaleString()
 
@@ -529,10 +505,12 @@ export default function QuoteDetailPage() {
 
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
 
+  const statusBadgeClass = QUOTE_STATUS_COLOR[quote?.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'
+
   return (
     <div className="p-8">
       {/* 헤더 */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <button onClick={() => router.back()} className="text-gray-400 hover:text-gray-600">
             <ArrowLeft size={20} />
@@ -540,20 +518,9 @@ export default function QuoteDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-2xl font-bold text-gray-900">{quote?.projects?.name ?? '프로젝트 없음'}</h2>
-              {quote?.quote_version && (
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                  quote.quote_version === '가견적' ? 'bg-gray-100 text-gray-600' :
-                  quote.quote_version === '1차견적' ? 'bg-blue-100 text-blue-700' :
-                  quote.quote_version === '2차견적' ? 'bg-violet-100 text-violet-700' :
-                  'bg-orange-100 text-orange-700'
-                }`}>{quote.quote_version}</span>
-              )}
-              {quote?.status === '계약견적서'
-                ? <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium">계약견적서</span>
-                : quote?.status === '배포완료'
-                ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">배포완료</span>
-                : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">작성중</span>
-              }
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadgeClass}`}>
+                {quote?.status}
+              </span>
               {editingRate ? (
                 <span className="flex items-center gap-1">
                   <input
@@ -611,58 +578,45 @@ export default function QuoteDetailPage() {
             className="flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
             <Printer size={15} /> 내부용 인쇄
           </button>
-          {isContract ? (
-            <>
-              {contractUnlocked && (
-                <button onClick={handleSave} disabled={saving}
-                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                  <Save size={15} /> {saving ? '저장 중...' : '저장'}
-                </button>
-              )}
-              {contractUnlocked ? (
-                <button
-                  onClick={() => { if (confirm('수정을 잠금하시겠습니까?')) setContractUnlocked(false) }}
-                  className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-600">
-                  🔓 수정 중
-                </button>
-              ) : (
-                <button
-                  onClick={() => { setPasswordInput(''); setPasswordError(false); setShowPasswordModal(true) }}
-                  className="flex items-center gap-2 bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-500">
-                  🔒 수정 잠금
-                </button>
-              )}
-            </>
-          ) : isEditable ? (
+          {quote?.status === '작성중' && (
             <>
               <button onClick={handleSave} disabled={saving}
                 className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
                 <Save size={15} /> {saving ? '저장 중...' : '저장'}
               </button>
-              <button onClick={handlePublish}
-                className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">
+              <button onClick={handleDeploy}
+                className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700">
                 <Send size={15} /> 배포하기
               </button>
             </>
-          ) : (
-            <div className="flex gap-2 items-start">
-              <div className="flex flex-col items-start gap-0.5">
-                <button onClick={handleContract}
-                  className="flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-600">
-                  계약 확정
-                </button>
-                {minProfitRate !== null && (
-                  <p className="text-xs text-gray-400">목표이윤율({minProfitRate}%) 기준으로 예상실행가가 자동 설정됩니다</p>
-                )}
-              </div>
-              <button onClick={handleUnpublish}
-                className="flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600">
-                <RotateCcw size={15} /> 수정하기
-              </button>
-            </div>
+          )}
+          {quote?.status === '배포' && (
+            <button onClick={handleContract}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700">
+              계약하기
+            </button>
+          )}
+          {quote?.status === '계약' && (
+            <button onClick={handleCreateSettlement}
+              className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-600">
+              정산견적 생성
+            </button>
+          )}
+          {quote?.status === '정산' && (
+            <button onClick={handleSave} disabled={saving}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+              <Save size={15} /> {saving ? '저장 중...' : '저장'}
+            </button>
           )}
         </div>
       </div>
+
+      {/* 읽기전용 배너 */}
+      {checkReadonly(quote?.status ?? '') && (
+        <div className="bg-yellow-50 border border-yellow-300 rounded-xl px-4 py-3 mb-4 text-sm text-yellow-800">
+          이 견적서는 <strong>{quote?.status}</strong> 상태로 읽기 전용입니다.
+        </div>
+      )}
 
       {/* 견적 합계표 */}
       <QuoteSummaryTable
@@ -671,8 +625,8 @@ export default function QuoteDetailPage() {
         discount={discount}
         open={summaryOpen}
         onToggle={() => setSummaryOpen(v => !v)}
-        isEditable={isEditable || isContractEditable}
-        isContract={isContract}
+        isEditable={isEditable}
+        isContract={isSettlement}
         minProfitRate={minProfitRate ?? undefined}
         onRateChange={(key, value) => setRates(r => ({ ...r, [key]: value }))}
         onDiscountChange={setDiscount}
@@ -686,11 +640,11 @@ export default function QuoteDetailPage() {
               <div className="px-5 py-2.5 flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
                 <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
                 <span className="text-xs text-gray-400">{gItems.length}개</span>
-                {isContract && (() => {
+                {isSettlement && (() => {
                   const actualCount = gItems.filter(i => (i.actual_execution_amount ?? 0) > 0).length
                   return <span className="text-xs text-gray-400 ml-1">{actualCount}/{gItems.length} 실입력</span>
                 })()}
-                {(isEditable || isContractEditable) && (
+                {isEditable && (
                   <button onClick={() => addItem(wt)}
                     className="no-print text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 ml-auto">
                     <Plus size={12} /> 항목 추가
@@ -711,7 +665,7 @@ export default function QuoteDetailPage() {
                       <th className="px-3 py-2 text-right text-xs font-semibold text-amber-600 w-28 bg-amber-50">노무금액</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-24">합계단가</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 w-28">합계금액</th>
-                      {isContract && (
+                      {isSettlement && (
                         <>
                           <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-violet-500 w-28">예상실행가</th>
                           <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-red-500 w-28">실제실행가</th>
@@ -720,7 +674,7 @@ export default function QuoteDetailPage() {
                         </>
                       )}
                       <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">비고</th>
-                      {(isEditable || isContractEditable) && <th className="no-print sticky right-0 bg-gray-50 w-8 z-10"></th>}
+                      {isEditable && <th className="no-print sticky right-0 bg-gray-50 w-8 z-10"></th>}
                     </tr>
                   </thead>
                   <SortableContext items={gItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
@@ -729,8 +683,8 @@ export default function QuoteDetailPage() {
                         <SortableItemRow
                           key={item.id}
                           item={item}
-                          isEditable={isEditable || isContractEditable}
-                          isContract={isContract}
+                          isEditable={isEditable}
+                          isSettlement={isSettlement}
                           upd={updateItem}
                           del={deleteItem}
                           addItemAt={addItemAt}
@@ -762,7 +716,7 @@ export default function QuoteDetailPage() {
                             <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
                               {fmt(groupQuote)}
                             </td>
-                            {isContract && (
+                            {isSettlement && (
                               <>
                                 <td className="internal-only px-3 py-2 text-xs text-right text-violet-600 font-bold">
                                   {groupPlanned > 0 ? fmt(groupPlanned) : '-'}
@@ -778,7 +732,7 @@ export default function QuoteDetailPage() {
                                 </td>
                               </>
                             )}
-                            <td colSpan={(isEditable || isContractEditable) ? 2 : 1}></td>
+                            <td colSpan={isEditable ? 2 : 1}></td>
                           </tr>
                         )
                       })()}
@@ -792,15 +746,15 @@ export default function QuoteDetailPage() {
       </DndContext>
 
       {/* 하단 저장 버튼 */}
-      {(isEditable || isContractEditable) && (
+      {isEditable && (
         <div className="no-print flex gap-3 mt-8">
           <button onClick={handleSave} disabled={saving}
             className="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50">
             {saving ? '저장 중...' : '견적서 저장'}
           </button>
-          {isEditable && (
-            <button onClick={handlePublish}
-              className="bg-green-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-green-700">
+          {quote?.status === '작성중' && (
+            <button onClick={handleDeploy}
+              className="bg-purple-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-purple-700">
               배포하기
             </button>
           )}
@@ -808,37 +762,6 @@ export default function QuoteDetailPage() {
             className="bg-gray-100 text-gray-600 px-8 py-3 rounded-lg font-medium hover:bg-gray-200">
             목록으로
           </button>
-        </div>
-      )}
-      {/* 비밀번호 모달 */}
-      {showPasswordModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-80">
-            <h3 className="font-bold text-gray-900 mb-1">계약견적서 수정 잠금 해제</h3>
-            <p className="text-sm text-gray-500 mb-4">관리자 비밀번호를 입력하세요</p>
-            <input
-              type="password"
-              value={passwordInput}
-              onChange={e => { setPasswordInput(e.target.value); setPasswordError(false) }}
-              onKeyDown={e => { if (e.key === 'Enter') handlePasswordConfirm() }}
-              autoFocus
-              placeholder="비밀번호"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-            />
-            {passwordError && (
-              <p className="text-xs text-red-500 mt-2">비밀번호가 올바르지 않습니다</p>
-            )}
-            <div className="flex gap-2 mt-4">
-              <button onClick={handlePasswordConfirm}
-                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700">
-                확인
-              </button>
-              <button onClick={() => setShowPasswordModal(false)}
-                className="flex-1 bg-gray-100 text-gray-600 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
-                취소
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>
