@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ArrowLeft, FileText, TrendingUp, TrendingDown, AlertTriangle, Plus, Copy } from 'lucide-react'
+import { QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
 
 const fmt = (n: number) => n?.toLocaleString() ?? '0'
 const fmtRate = (n: number) => (n ? n.toFixed(1) : '0')
@@ -43,16 +44,13 @@ export default function ProjectDetailPage() {
     })
   }, [id])
 
-  const contractQuotes = quotes.filter(q => q.status === '계약견적서')
+  const contractQuotes = quotes.filter(q => q.status === '계약')
   const latestContract = contractQuotes[contractQuotes.length - 1]
   const latestItems = latestContract ? (quoteItems[latestContract.id] ?? []) : []
 
-  const totalQuoteAmount = latestItems.reduce((s, i) =>
-    s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
-  const totalExecutionAmount = latestItems.reduce((s, i) =>
-    s + (i.execution_amount ?? 0), 0)
-  const totalProfit = totalQuoteAmount - totalExecutionAmount
-  const profitRate = totalQuoteAmount > 0 ? (totalProfit / totalQuoteAmount) * 100 : 0
+  const totalExecutionAmount = Number(latestContract?.total_execution_amount ?? 0)
+  const totalProfit = Number(latestContract?.total_profit ?? 0)
+  const profitRate = Number(latestContract?.total_profit_rate ?? 0)
 
   const minusItems = latestItems.filter(i => {
     const quoteAmt = (i.material_unit_price + i.labor_unit_price) * i.quantity
@@ -143,7 +141,7 @@ export default function ProjectDetailPage() {
           </div>
           <div className="bg-white rounded-xl border border-gray-100 p-4">
             <p className="text-xs text-gray-400 mb-1">견적금액</p>
-            <p className="text-lg font-bold text-gray-900">{fmt(totalQuoteAmount)}</p>
+            <p className="text-lg font-bold text-gray-900">{fmt(Number(latestContract.final_amount ?? 0))}</p>
             <p className="text-xs text-gray-400">원</p>
           </div>
           <div className="bg-white rounded-xl border border-gray-100 p-4">
@@ -221,11 +219,8 @@ export default function ProjectDetailPage() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {quotes.map(q => {
-                const its = quoteItems[q.id] ?? []
-                const qAmt = its.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
-                const eAmt = its.reduce((s, i) => s + (i.execution_amount ?? 0), 0)
-                const profit = qAmt - eAmt
-                const rate = qAmt > 0 ? (profit / qAmt) * 100 : 0
+                const eAmt = Number(q.total_execution_amount ?? 0)
+                const rate = Number(q.total_profit_rate ?? 0)
                 return (
                   <tr key={q.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
@@ -234,14 +229,11 @@ export default function ProjectDetailPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {q.status === '계약견적서'
-                        ? <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium">계약견적서</span>
-                        : q.status === '배포완료'
-                        ? <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">배포완료</span>
-                        : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">작성중</span>
-                      }
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${QUOTE_STATUS_COLOR[q.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {q.status ?? '-'}
+                      </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-xs text-gray-700">{qAmt > 0 ? fmt(qAmt) : '-'}</td>
+                    <td className="px-4 py-3 text-right text-xs text-gray-700">{Number(q.final_amount) > 0 ? fmt(Number(q.final_amount)) : '-'}</td>
                     <td className="px-4 py-3 text-right text-xs text-red-600">{eAmt > 0 ? fmt(eAmt) : '-'}</td>
                     <td className="px-4 py-3 text-right">
                       {eAmt > 0 ? (

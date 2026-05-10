@@ -458,7 +458,17 @@ function NewQuoteForm() {
 
   return (
     <div className="p-8">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">새 견적서 작성</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">새 견적서 작성</h2>
+        <div className="flex gap-3">
+          <button onClick={handleSave} disabled={loading || loadingTemplate || !projectId}
+            className="bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+            {loading ? '저장중...' : '견적서 저장'}
+          </button>
+          <button onClick={() => router.back()}
+            className="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-200">취소</button>
+        </div>
+      </div>
 
       {/* 복사 모드 배너 */}
       {copyFromId && (

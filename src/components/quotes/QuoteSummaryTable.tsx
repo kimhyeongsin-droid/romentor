@@ -63,12 +63,12 @@ export default function QuoteSummaryTable({
   const directLabor    = summaryRows.reduce((s, r) => s + r.laborTotal, 0)
   const directTotal    = directMaterial + directLabor
 
-  const indirectAccident   = Math.round(directLabor * rates.accident / 100)
-  const indirectEmployment = Math.round(directLabor * rates.employment / 100)
-  const indirectOverhead   = Math.round(directTotal * rates.overhead / 100)
-  const indirectProfit     = Math.round(directTotal * rates.profit / 100)
+  const indirectAccident   = Math.floor(directLabor * rates.accident / 100)
+  const indirectEmployment = Math.floor(directLabor * rates.employment / 100)
+  const indirectOverhead   = Math.floor(directTotal * rates.overhead / 100)
+  const indirectProfit     = Math.floor(directTotal * rates.profit / 100)
   const indirectTotal      = indirectAccident + indirectEmployment + indirectOverhead + indirectProfit
-  const vat                = Math.round(directTotal * rates.vat / 100)
+  const vat                = Math.floor((directTotal + indirectTotal) * rates.vat / 100)
   const finalTotal         = directTotal + indirectTotal + vat + discount
 
   const totalActualExec = items.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
@@ -235,14 +235,14 @@ export default function QuoteSummaryTable({
               <tr className="hover:bg-gray-50">
                 <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
                 <td className="px-4 py-2 text-xs text-gray-700">
-                  부가세 (직접공사비 ×{' '}
+                  부가세{' '}
                   {isEditable ? (
                     <input type="number" value={rates.vat}
                       onChange={e => onRateChange('vat', Number(e.target.value))}
                       className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                       step="0.1" />
                   ) : rates.vat}
-                  %)
+                  %
                 </td>
                 <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>
                 <td className="px-4 py-2 text-xs text-gray-300 text-right">-</td>

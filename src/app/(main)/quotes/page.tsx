@@ -10,18 +10,17 @@ import { QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
-type SortKey = 'updated_at' | 'quote_number' | 'project_name' | 'total_quote_amount' | 'total_profit_rate' | 'status'
+type SortKey = 'updated_at' | 'quote_number' | 'project_name' | 'final_amount' | 'status'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'updated_at', label: '수정일' },
   { value: 'quote_number', label: '견적번호' },
   { value: 'project_name', label: '프로젝트명' },
-  { value: 'total_quote_amount', label: '견적금액' },
-  { value: 'total_profit_rate', label: '이윤율' },
+  { value: 'final_amount', label: '견적금액' },
   { value: 'status', label: '상태' },
 ]
 
-const NUMERIC_KEYS: SortKey[] = ['total_quote_amount', 'total_profit_rate']
+const NUMERIC_KEYS: SortKey[] = ['final_amount']
 
 function getSortValue(q: any, key: SortKey): string | number {
   if (key === 'project_name') return q.projects?.name ?? ''
@@ -34,10 +33,9 @@ const DEFAULT_WIDTHS = {
   project_name: 180,
   client_name: 76,
   manager_name: 76,
-  total_quote_amount: 100,
-  total_execution_amount: 100,
-  total_profit: 92,
-  total_profit_rate: 56,
+  designer_name: 76,
+  site_manager_name: 76,
+  final_amount: 100,
   status: 120,
   actions: 82,
 }
@@ -62,7 +60,7 @@ function QuotesContent() {
   async function load() {
     let query = createClient()
       .from('quotes')
-      .select('id, quote_number, type, status, total_quote_amount, total_execution_amount, total_profit, total_profit_rate, note, updated_at, projects(name, client_name, manager_name)')
+      .select('id, quote_number, type, status, final_amount, note, updated_at, projects(name, client_name, manager_name, designer_name, site_manager_name)')
       .order('created_at', { ascending: false })
 
     if (projectId) {
@@ -94,7 +92,7 @@ function QuotesContent() {
     const q = search.trim().toLowerCase()
     if (!q) return quotes
     return quotes.filter(row =>
-      [row.quote_number, row.projects?.name, row.projects?.client_name, row.projects?.manager_name]
+      [row.quote_number, row.projects?.name, row.projects?.client_name, row.projects?.manager_name, row.projects?.designer_name, row.projects?.site_manager_name]
         .some(v => v?.toLowerCase().includes(q))
     )
   }, [quotes, search])
@@ -202,24 +200,20 @@ function QuotesContent() {
                 <ResizeHandle columnKey="client_name" onMouseDown={startResize} />
               </th>
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.manager_name }}>
-                담당자
+                담당 PM
                 <ResizeHandle columnKey="manager_name" onMouseDown={startResize} />
               </th>
-              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.total_quote_amount }}>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.designer_name }}>
+                디자이너
+                <ResizeHandle columnKey="designer_name" onMouseDown={startResize} />
+              </th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.site_manager_name }}>
+                현장소장
+                <ResizeHandle columnKey="site_manager_name" onMouseDown={startResize} />
+              </th>
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.final_amount }}>
                 견적금액
-                <ResizeHandle columnKey="total_quote_amount" onMouseDown={startResize} />
-              </th>
-              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.total_execution_amount }}>
-                실행금액
-                <ResizeHandle columnKey="total_execution_amount" onMouseDown={startResize} />
-              </th>
-              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.total_profit }}>
-                이윤
-                <ResizeHandle columnKey="total_profit" onMouseDown={startResize} />
-              </th>
-              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.total_profit_rate }}>
-                이윤율
-                <ResizeHandle columnKey="total_profit_rate" onMouseDown={startResize} />
+                <ResizeHandle columnKey="final_amount" onMouseDown={startResize} />
               </th>
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide relative" style={{ width: widths.status }}>
                 상태
@@ -231,7 +225,7 @@ function QuotesContent() {
           <tbody className="divide-y divide-gray-50">
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-3 py-12 text-center text-gray-400">
+                <td colSpan={9} className="px-3 py-12 text-center text-gray-400">
                   {search ? '검색 결과가 없습니다.' : '견적이 없습니다.'}
                 </td>
               </tr>
@@ -263,16 +257,15 @@ function QuotesContent() {
                   <div className="truncate">{q.projects?.client_name}</div>
                 </td>
                 <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{q.projects?.manager_name}</div>
+                  <div className="truncate">{q.projects?.manager_name || '-'}</div>
                 </td>
-                <td className="px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap">{formatKRW(q.total_quote_amount)}</td>
-                <td className="px-3 py-2.5 text-right text-xs whitespace-nowrap">{formatKRW(q.total_execution_amount)}</td>
-                <td className={`px-3 py-2.5 text-right text-xs font-semibold whitespace-nowrap ${Number(q.total_profit) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {formatKRW(q.total_profit)}
+                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
+                  <div className="truncate">{q.projects?.designer_name || '-'}</div>
                 </td>
-                <td className={`px-3 py-2.5 text-right text-xs font-semibold whitespace-nowrap ${Number(q.total_profit_rate) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {q.total_profit_rate}%
+                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
+                  <div className="truncate">{q.projects?.site_manager_name || '-'}</div>
                 </td>
+                <td className="px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap">{formatKRW(q.final_amount)}</td>
                 <td className="px-3 py-2.5">
                   <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${QUOTE_STATUS_COLOR[q.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'}`}>
                     {q.status}
