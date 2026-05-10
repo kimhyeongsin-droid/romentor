@@ -233,6 +233,19 @@ export default function QuoteDetailPage() {
       setQuote(q)
       if (q) {
         setMinProfitRate(q.min_profit_rate ?? q.projects?.min_profit_rate ?? null)
+        const round2 = (n: number) => Math.round(n * 100) / 100
+        if (q.rate_accident_insurance != null) {
+          setRates({
+            accident: round2(Number(q.rate_accident_insurance) * 100),
+            employment: round2(Number(q.rate_employment_insurance) * 100),
+            overhead: round2(Number(q.rate_indirect_overhead) * 100),
+            profit: round2(Number(q.rate_profit_margin) * 100),
+            vat: round2(Number(q.rate_vat) * 100),
+          })
+        }
+        if (q.discount_amount != null) {
+          setDiscount(Number(q.discount_amount))
+        }
       }
       if (its) {
         const sorted = [...its].sort((a, b) => {
@@ -416,6 +429,15 @@ export default function QuoteDetailPage() {
           return
         }
       }
+
+      await sb.from('quotes').update({
+        rate_accident_insurance: rates.accident / 100,
+        rate_employment_insurance: rates.employment / 100,
+        rate_indirect_overhead: rates.overhead / 100,
+        rate_profit_margin: rates.profit / 100,
+        rate_vat: rates.vat / 100,
+        discount_amount: discount || 0,
+      }).eq('id', id)
 
       setSaving(false)
       alert('✅ 저장됐습니다.')

@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { Plus, Trash2, Lock, Unlock, RefreshCw, ChevronDown, GripVertical } from 'lucide-react'
 import { verifyAdminPassword } from '@/lib/passwordVerify'
+import { fetchCompanyRates, saveCompanyRates } from '@/lib/companySettings'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -162,6 +163,8 @@ export default function TemplatePage() {
     profit: 15,
     vat: 10,
   })
+  const [rateSaveStatus, setRateSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const saveTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [showAddWorkType, setShowAddWorkType] = useState(false)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
@@ -180,6 +183,30 @@ export default function TemplatePage() {
   }
 
   useEffect(() => { if (unlocked) load() }, [unlocked, sizeCategory])
+
+  useEffect(() => {
+    if (!unlocked) return
+    fetchCompanyRates().then(loaded => {
+      if (loaded) setRates(loaded)
+    })
+  }, [unlocked])
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [])
+
+  function handleRateChange(newRates: typeof rates) {
+    setRates(newRates)
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    setRateSaveStatus('saving')
+    saveTimerRef.current = setTimeout(async () => {
+      const result = await saveCompanyRates(newRates)
+      setRateSaveStatus(result.success ? 'saved' : 'error')
+      setTimeout(() => setRateSaveStatus('idle'), 2000)
+    }, 500)
+  }
 
   async function tryUnlock() {
     const ok = await verifyAdminPassword(pwInput)
@@ -451,6 +478,9 @@ export default function TemplatePage() {
           <h2 className="text-2xl font-bold text-gray-900">기본 견적 포맷</h2>
           <p className="text-gray-500 text-sm mt-1">총 {items.length}개 항목 · 셀 클릭 후 수정, 포커스 아웃 시 자동 저장</p>
           {syncMsg && <p className="text-sm text-emerald-600 mt-1 font-medium">{syncMsg}</p>}
+          {rateSaveStatus === 'saving' && <p className="text-xs text-gray-500 mt-1">저장 중...</p>}
+          {rateSaveStatus === 'saved' && <p className="text-xs text-green-600 mt-1">저장됨 ✓</p>}
+          {rateSaveStatus === 'error' && <p className="text-xs text-red-600 mt-1">저장 실패</p>}
         </div>
         <div className="flex items-start gap-3 flex-shrink-0">
           <div className="flex flex-col items-end gap-1">
@@ -608,7 +638,7 @@ export default function TemplatePage() {
                     <td className="px-4 py-2 text-xs text-gray-700">
                       산재보험료 (노무비 ×{' '}
                       <input type="number" value={rates.accident}
-                        onChange={e => setRates(r => ({ ...r, accident: Number(e.target.value) }))}
+                        onChange={e => handleRateChange({ ...rates, accident: Number(e.target.value) })}
                         className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                         step="0.01" />
                       %)
@@ -624,7 +654,7 @@ export default function TemplatePage() {
                     <td className="px-4 py-2 text-xs text-gray-700">
                       고용보험료 (노무비 ×{' '}
                       <input type="number" value={rates.employment}
-                        onChange={e => setRates(r => ({ ...r, employment: Number(e.target.value) }))}
+                        onChange={e => handleRateChange({ ...rates, employment: Number(e.target.value) })}
                         className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                         step="0.01" />
                       %)
@@ -640,7 +670,7 @@ export default function TemplatePage() {
                     <td className="px-4 py-2 text-xs text-gray-700">
                       공과잡비 (직접공사비 ×{' '}
                       <input type="number" value={rates.overhead}
-                        onChange={e => setRates(r => ({ ...r, overhead: Number(e.target.value) }))}
+                        onChange={e => handleRateChange({ ...rates, overhead: Number(e.target.value) })}
                         className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                         step="0.1" />
                       %)
@@ -656,7 +686,7 @@ export default function TemplatePage() {
                     <td className="px-4 py-2 text-xs text-gray-700">
                       기업이윤 (직접공사비 ×{' '}
                       <input type="number" value={rates.profit}
-                        onChange={e => setRates(r => ({ ...r, profit: Number(e.target.value) }))}
+                        onChange={e => handleRateChange({ ...rates, profit: Number(e.target.value) })}
                         className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                         step="0.1" />
                       %)
@@ -680,7 +710,7 @@ export default function TemplatePage() {
                     <td className="px-4 py-2 text-xs text-gray-700">
                       부가세 (직접공사비 ×{' '}
                       <input type="number" value={rates.vat}
-                        onChange={e => setRates(r => ({ ...r, vat: Number(e.target.value) }))}
+                        onChange={e => handleRateChange({ ...rates, vat: Number(e.target.value) })}
                         className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                         step="0.1" />
                       %)

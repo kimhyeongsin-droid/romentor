@@ -9,6 +9,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { generateQuoteNumber } from '@/lib/utils'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES } from '@/lib/quoteConstants'
+import { fetchCompanyRates } from '@/lib/companySettings'
 import { Plus, Trash2, GripVertical } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
 
@@ -188,6 +189,14 @@ function NewQuoteForm() {
       })))
     }
     autoLoad()
+  }, [])
+
+  // 새 견적: company_settings에서 요율 로드 (복사 모드는 원본 견적 요율 사용)
+  useEffect(() => {
+    if (copyFromId) return
+    fetchCompanyRates().then(loaded => {
+      if (loaded) setRates(loaded)
+    })
   }, [])
 
   // 복사 모드: 원본 견적 로드
@@ -415,6 +424,12 @@ function NewQuoteForm() {
         note,
         status: '작성중',
         type: '견적',
+        rate_accident_insurance: rates.accident / 100,
+        rate_employment_insurance: rates.employment / 100,
+        rate_indirect_overhead: rates.overhead / 100,
+        rate_profit_margin: rates.profit / 100,
+        rate_vat: rates.vat / 100,
+        discount_amount: discount || 0,
       }).select().single()
       if (data) { quote = data; break }
       quoteError = error

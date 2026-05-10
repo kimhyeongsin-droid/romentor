@@ -192,7 +192,7 @@ export default function QuoteSummaryTable({
                 { label: '고용보험료', base: '노무비', key: 'employment' as const, val: indirectEmployment, step: '0.01' },
                 { label: '공과잡비', base: '직접공사비', key: 'overhead' as const, val: indirectOverhead, step: '0.1' },
                 { label: '기업이윤', base: '직접공사비', key: 'profit' as const, val: indirectProfit, step: '0.1' },
-              ]).filter(({ key }) => isContract || key !== 'profit').map(({ label, base, key, val, step }) => (
+              ]).map(({ label, base, key, val, step }) => (
                 <tr key={key} className="hover:bg-gray-50">
                   <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
                   <td className="px-4 py-2 text-xs text-gray-700">
