@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, type WorkType, type UnitPrice } from '@/types'
 import { Plus, Pencil, Trash2, Save, X, Lock, Unlock } from 'lucide-react'
-
-const PASSWORD = 'romentor2024'
+import { verifyAdminPassword } from '@/lib/passwordVerify'
 
 const WORK_ORDER: WorkType[] = [
   '가설공사', '철거', '마루철거', '설비', '전기배선', '창호', '목공', '도어',
@@ -53,8 +52,9 @@ export default function UnitsPage() {
 
   useEffect(() => { if (unlocked) load() }, [unlocked])
 
-  function tryUnlock() {
-    if (pwInput === PASSWORD) {
+  async function tryUnlock() {
+    const ok = await verifyAdminPassword(pwInput)
+    if (ok) {
       setUnlocked(true)
       sessionStorage.setItem('units_unlocked', 'true')
       setPwError(false)
@@ -123,6 +123,9 @@ export default function UnitsPage() {
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-1">단가 마스터</h2>
           <p className="text-sm text-gray-400 mb-6">관리자 비밀번호를 입력하세요</p>
+          {!process.env.NEXT_PUBLIC_FORMAT_PASSWORD_HASH && (
+            <p className="text-xs text-orange-500 mb-3">비밀번호 설정 오류: 환경변수가 설정되지 않았습니다</p>
+          )}
           <input
             type="password"
             value={pwInput}

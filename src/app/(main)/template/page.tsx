@@ -3,12 +3,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
-import { Plus, Trash2, Lock, RefreshCw, ChevronDown, GripVertical } from 'lucide-react'
+import { Plus, Trash2, Lock, Unlock, RefreshCw, ChevronDown, GripVertical } from 'lucide-react'
+import { verifyAdminPassword } from '@/lib/passwordVerify'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
-const PASSWORD = 'romentor2024'
 
 interface TemplateItem {
   id: string; work_type: WorkType; item_name: string; unit: string
@@ -181,11 +181,20 @@ export default function TemplatePage() {
 
   useEffect(() => { if (unlocked) load() }, [unlocked, sizeCategory])
 
-  function tryUnlock() {
-    if (pwInput === PASSWORD) {
+  async function tryUnlock() {
+    const ok = await verifyAdminPassword(pwInput)
+    if (ok) {
       setUnlocked(true)
       sessionStorage.setItem('units_unlocked', 'true')
-    } else { setPwError(true) }
+      setPwError(false)
+    } else {
+      setPwError(true)
+    }
+  }
+
+  function lock() {
+    setUnlocked(false)
+    sessionStorage.removeItem('units_unlocked')
   }
 
   const filtered = filter === 'all' ? items : items.filter(i => i.work_type === filter)
@@ -420,6 +429,9 @@ export default function TemplatePage() {
         </div>
         <h2 className="text-xl font-bold text-gray-900 mb-1">기본 견적 포맷</h2>
         <p className="text-sm text-gray-400 mb-6">관리자 비밀번호를 입력하세요</p>
+        {!process.env.NEXT_PUBLIC_FORMAT_PASSWORD_HASH && (
+          <p className="text-xs text-orange-500 mb-3">비밀번호 설정 오류: 환경변수가 설정되지 않았습니다</p>
+        )}
         <input type="password" value={pwInput}
           onChange={e => setPwInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && tryUnlock()}
@@ -462,6 +474,10 @@ export default function TemplatePage() {
           <button onClick={() => setShowAddWorkType(true)}
             className="flex items-center gap-2 bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700">
             <Plus size={15} /> 공종 추가
+          </button>
+          <button onClick={lock}
+            className="flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
+            <Unlock size={16} /> 잠금
           </button>
         </div>
       </div>
