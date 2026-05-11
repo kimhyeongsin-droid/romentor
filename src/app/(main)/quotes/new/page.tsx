@@ -206,7 +206,10 @@ function NewQuoteForm() {
       const sb = createClient()
       const [{ data: q }, { data: its }] = await Promise.all([
         sb.from('quotes').select('*, projects(id, name)').eq('id', copyFromId).single(),
-        sb.from('quote_items').select('*').eq('quote_id', copyFromId).order('work_type').order('created_at'),
+        sb.from('quote_items').select('*').eq('quote_id', copyFromId)
+          .order('work_type')
+          .order('sort_order', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: true }),
       ])
 
       if (q) {
@@ -390,21 +393,26 @@ function NewQuoteForm() {
       if (!confirm('같은 프로젝트에 복사합니다. 계속하시겠습니까?')) return
     }
 
+    const workTypeCounters: Record<string, number> = {}
     const insertItems = items
       .filter(i => i.quantity > 0)
-      .map((i, idx) => ({
-        work_type: i.work_type,
-        item_name: i.item_name,
-        comment: i.comment,
-        unit: i.unit,
-        quantity: i.quantity,
-        material_unit_price: i.material_unit_price,
-        labor_unit_price: i.labor_unit_price,
-        note: i.note,
-        sort_order: idx,
-        planned_execution_amount: null,
-        actual_execution_amount: null,
-      }))
+      .map(i => {
+        const counter = workTypeCounters[i.work_type] ?? 0
+        workTypeCounters[i.work_type] = counter + 1
+        return {
+          work_type: i.work_type,
+          item_name: i.item_name,
+          comment: i.comment,
+          unit: i.unit,
+          quantity: i.quantity,
+          material_unit_price: i.material_unit_price,
+          labor_unit_price: i.labor_unit_price,
+          note: i.note,
+          sort_order: counter,
+          planned_execution_amount: null,
+          actual_execution_amount: null,
+        }
+      })
 
     if (insertItems.length === 0) {
       alert('수량이 입력된 항목이 없습니다. 최소 1개 이상 입력해주세요.')

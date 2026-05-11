@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
+import { useResizableColumns } from '@/hooks/useResizableColumns'
+import { ResizeHandle } from '@/components/common/ResizeHandle'
 
 export interface Rates {
   accident: number
@@ -33,14 +35,25 @@ interface Props {
   minProfitRate?: number
   onRateChange: (key: keyof Rates, value: number) => void
   onDiscountChange: (value: number) => void
+  worktypeMemos?: Record<string, string>
+  onWorktypeMemoChange?: (workType: string, memo: string) => void
 }
 
 const fmt = (n: number) => n.toLocaleString()
 
+const SUMMARY_DEFAULT_WIDTHS = {
+  number: 50, name: 200, material_amount: 110, labor_amount: 110, total_amount: 110,
+  execution_amount: 110, profit: 100, profit_rate: 80, memo: 150,
+}
+
 export default function QuoteSummaryTable({
-  items, rates, discount, open, onToggle, isEditable, isContract, minProfitRate, onRateChange, onDiscountChange,
+  items, rates, discount, open, onToggle, isEditable, isContract, minProfitRate, onRateChange, onDiscountChange, worktypeMemos = {}, onWorktypeMemoChange,
 }: Props) {
   const [rawDiscount, setRawDiscount] = useState<string | null>(null)
+  const { widths: resizableSummaryWidths, startResize: startSummaryResize } = useResizableColumns(
+    'romentor.quoteSummaryTable.settlement.colWidths', SUMMARY_DEFAULT_WIDTHS
+  )
+  const summaryWidths = isContract ? resizableSummaryWidths : SUMMARY_DEFAULT_WIDTHS
   // 공종별 집계 (실행금액 포함)
   const summaryRows = WORK_ORDER.map(wt => {
     const wtItems = items.filter(i => i.work_type === wt)
@@ -83,8 +96,8 @@ export default function QuoteSummaryTable({
   const totalActualProfit   = totalActualExec > 0 ? directTotal - totalActualExec : null
   const totalActualProfitRate = totalActualProfit !== null && directTotal > 0 ? (totalActualProfit / directTotal) * 100 : null
 
-  // 계약 모드: 8컬럼, 일반: 5컬럼
-  const totalCols = isContract ? 8 : 5
+  // 계약 모드: 9컬럼 (기본5 + 실행금액/이윤/이윤율/메모), 일반: 5컬럼
+  const totalCols = isContract ? 9 : 5
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-6 overflow-hidden">
@@ -98,19 +111,47 @@ export default function QuoteSummaryTable({
 
       {open && (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[600px]">
+          <table className={`w-full text-sm min-w-[600px]${isContract ? ' table-fixed' : ''}`}>
             <thead>
               <tr className="bg-gray-800 text-white">
-                <th className="px-4 py-2.5 text-center text-xs font-semibold w-12">번호</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold">명 칭</th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold w-36">재료비 금액</th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold w-36">노무비 금액</th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold w-36">합계 금액</th>
+                <th className={`px-4 py-2.5 text-center text-xs font-semibold w-12${isContract ? ' relative' : ''}`} style={isContract ? { width: summaryWidths.number } : undefined}>
+                  번호
+                  {isContract && <ResizeHandle columnKey="number" onMouseDown={startSummaryResize} />}
+                </th>
+                <th className={`px-4 py-2.5 text-left text-xs font-semibold${isContract ? ' relative' : ''}`} style={isContract ? { width: summaryWidths.name } : undefined}>
+                  명 칭
+                  {isContract && <ResizeHandle columnKey="name" onMouseDown={startSummaryResize} />}
+                </th>
+                <th className={`px-4 py-2.5 text-right text-xs font-semibold w-36${isContract ? ' relative' : ''}`} style={isContract ? { width: summaryWidths.material_amount } : undefined}>
+                  재료비 금액
+                  {isContract && <ResizeHandle columnKey="material_amount" onMouseDown={startSummaryResize} />}
+                </th>
+                <th className={`px-4 py-2.5 text-right text-xs font-semibold w-36${isContract ? ' relative' : ''}`} style={isContract ? { width: summaryWidths.labor_amount } : undefined}>
+                  노무비 금액
+                  {isContract && <ResizeHandle columnKey="labor_amount" onMouseDown={startSummaryResize} />}
+                </th>
+                <th className={`px-4 py-2.5 text-right text-xs font-semibold w-36${isContract ? ' relative' : ''}`} style={isContract ? { width: summaryWidths.total_amount } : undefined}>
+                  합계 금액
+                  {isContract && <ResizeHandle columnKey="total_amount" onMouseDown={startSummaryResize} />}
+                </th>
                 {isContract && (
                   <>
-                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold w-32">실행금액</th>
-                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold w-28">이윤</th>
-                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold w-20">이윤율</th>
+                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold relative" style={{ width: summaryWidths.execution_amount }}>
+                      실행금액
+                      <ResizeHandle columnKey="execution_amount" onMouseDown={startSummaryResize} />
+                    </th>
+                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold relative" style={{ width: summaryWidths.profit }}>
+                      이윤
+                      <ResizeHandle columnKey="profit" onMouseDown={startSummaryResize} />
+                    </th>
+                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold relative" style={{ width: summaryWidths.profit_rate }}>
+                      이윤율
+                      <ResizeHandle columnKey="profit_rate" onMouseDown={startSummaryResize} />
+                    </th>
+                    <th className="internal-only px-4 py-2.5 text-left text-xs font-semibold relative" style={{ width: summaryWidths.memo }}>
+                      메모
+                      <ResizeHandle columnKey="memo" onMouseDown={startSummaryResize} />
+                    </th>
                   </>
                 )}
               </tr>
@@ -150,6 +191,19 @@ export default function QuoteSummaryTable({
                         } ${italicCls}`}>
                           {row.profitRate !== null ? row.profitRate.toFixed(1) + '%' : '-'}
                         </td>
+                        <td className="internal-only px-4 py-2">
+                          {isEditable ? (
+                            <input
+                              type="text"
+                              value={worktypeMemos[row.wt] ?? ''}
+                              onChange={e => onWorktypeMemoChange?.(row.wt, e.target.value)}
+                              placeholder="-"
+                              className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white placeholder:text-gray-300"
+                            />
+                          ) : (
+                            <span className="text-xs text-gray-600">{worktypeMemos[row.wt] ?? '-'}</span>
+                          )}
+                        </td>
                       </>
                     )
                   })()}
@@ -179,6 +233,7 @@ export default function QuoteSummaryTable({
                     }`}>
                       {totalProfitRate !== null ? totalProfitRate.toFixed(1) + '%' : '-'}
                     </td>
+                    <td className="internal-only px-4 py-2.5 text-xs text-gray-300">-</td>
                   </>
                 )}
               </tr>
@@ -213,6 +268,7 @@ export default function QuoteSummaryTable({
                       <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                       <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                       <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
+                      <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     </>
                   )}
                 </tr>
@@ -224,6 +280,7 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-2.5 text-xs text-gray-900 font-bold text-right">{fmt(indirectTotal)}</td>
                 {isContract && (
                   <>
+                    <td className="internal-only px-4 py-2.5"></td>
                     <td className="internal-only px-4 py-2.5"></td>
                     <td className="internal-only px-4 py-2.5"></td>
                     <td className="internal-only px-4 py-2.5"></td>
@@ -249,6 +306,7 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-2 text-xs text-gray-700 font-medium text-right">{fmt(vat)}</td>
                 {isContract && (
                   <>
+                    <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
@@ -292,6 +350,7 @@ export default function QuoteSummaryTable({
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
+                    <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                   </>
                 )}
               </tr>
@@ -301,21 +360,21 @@ export default function QuoteSummaryTable({
                 <>
                   {totalActualExec > 0 && (
                     <tr className={`internal-only ${totalActualProfit !== null && totalActualProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                      <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">
+                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
                         실행금액 합계 <span className="font-normal text-gray-400 text-xs">(실제)</span>
                       </td>
                       <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalActualExec)} 원</td>
                     </tr>
                   )}
                   <tr className={`internal-only ${totalProfit !== null && totalProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                    <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">
+                    <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
                       실행금액 합계 <span className="font-normal text-gray-400 text-xs">(예상 포함)</span>
                     </td>
                     <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalEffectiveExec)} 원</td>
                   </tr>
                   {totalActualExec > 0 && totalActualProfit !== null && (
                     <tr className={`internal-only ${totalActualProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                      <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">
+                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
                         이윤 (실제) {totalActualProfit < 0 ? '⚠️ 마이너스!' : ''}
                       </td>
                       <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
@@ -324,7 +383,7 @@ export default function QuoteSummaryTable({
                     </tr>
                   )}
                   <tr className={`internal-only ${totalProfit !== null && totalProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                    <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">
+                    <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
                       이윤 (예상 포함) {totalProfit !== null && totalProfit < 0 ? '⚠️ 마이너스!' : ''}
                     </td>
                     <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfit !== null && totalProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
@@ -333,7 +392,7 @@ export default function QuoteSummaryTable({
                   </tr>
                   {totalActualExec > 0 && totalActualProfitRate !== null && (
                     <tr className={`internal-only ${totalActualProfitRate < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                      <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">이윤율 (실제)</td>
+                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">이윤율 (실제)</td>
                       <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfitRate < 0 ? 'text-red-700' : 'text-green-700'}`}>
                         {totalActualProfitRate.toFixed(1)}%
                       </td>
@@ -341,7 +400,7 @@ export default function QuoteSummaryTable({
                   )}
                   {totalProfitRate !== null && (
                     <tr className={`internal-only ${totalProfitRate < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                      <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">이윤율 (예상 포함)</td>
+                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">이윤율 (예상 포함)</td>
                       <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfitRate < 0 ? 'text-red-700' : 'text-green-700'}`}>
                         {totalProfitRate.toFixed(1)}%
                       </td>
@@ -349,7 +408,7 @@ export default function QuoteSummaryTable({
                   )}
                   {minProfitRate != null && totalProfitRate !== null && (
                     <tr className={`internal-only ${totalProfitRate >= minProfitRate ? 'bg-green-50' : 'bg-red-50'}`}>
-                      <td colSpan={7} className="px-4 py-2.5 text-xs font-bold">
+                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
                         목표 이윤율 {totalProfitRate >= minProfitRate ? '✓ 달성' : '✗ 미달'}
                       </td>
                       <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfitRate >= minProfitRate ? 'text-green-700' : 'text-red-700'}`}>
@@ -366,6 +425,7 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-3.5 text-sm font-bold text-white text-right">{fmt(finalTotal)} 원</td>
                 {isContract && (
                   <>
+                    <td className="internal-only px-4 py-3.5"></td>
                     <td className="internal-only px-4 py-3.5"></td>
                     <td className="internal-only px-4 py-3.5"></td>
                     <td className="internal-only px-4 py-3.5"></td>

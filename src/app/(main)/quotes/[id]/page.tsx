@@ -8,9 +8,37 @@ import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
+import { useResizableColumns } from '@/hooks/useResizableColumns'
+import { ResizeHandle } from '@/components/common/ResizeHandle'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+
+const TOGGLEABLE_COLUMNS = [
+  { key: 'comment', label: 'Comment' },
+  { key: 'unit', label: '단위' },
+  { key: 'quantity', label: '수량' },
+  { key: 'material_unit_price', label: '재료단가' },
+  { key: 'material_amount', label: '재료금액' },
+  { key: 'labor_unit_price', label: '노무단가' },
+  { key: 'labor_amount', label: '노무금액' },
+  { key: 'total_unit_price', label: '합계단가' },
+  { key: 'total_amount', label: '합계금액' },
+  { key: 'planned_execution', label: '예상실행가' },
+  { key: 'execution_date', label: '지출일' },
+  { key: 'actual_execution', label: '실제실행가' },
+  { key: 'profit', label: '이윤' },
+  { key: 'profit_rate', label: '이윤율' },
+  { key: 'remark', label: '비고' },
+]
+const COLUMN_VISIBILITY_KEY = 'romentor.quoteItemTable.settlement.visibleColumns'
+
+const ITEM_DEFAULT_WIDTHS = {
+  item_name: 180, comment: 150, unit: 50, quantity: 60,
+  material_unit_price: 90, material_amount: 90, labor_unit_price: 90, labor_amount: 90,
+  total_unit_price: 80, total_amount: 90, planned_execution: 100, execution_date: 110,
+  actual_execution: 100, profit: 80, profit_rate: 70, remark: 100, delete: 32,
+}
 
 function autoResize(el: HTMLTextAreaElement) {
   el.style.height = 'auto'
@@ -29,6 +57,8 @@ interface QuoteItem {
   planned_execution_amount: number | null
   actual_execution_amount: number | null
   execution_amount: number | null
+  execution_date: string | null
+  execution_memo: string | null
   note: string
   sort_order: number | null
 }
@@ -40,9 +70,11 @@ interface SortableItemRowProps {
   upd: (id: string, key: keyof QuoteItem, value: any) => void
   del: (id: string) => void
   addItemAt: (workType: string, afterId: string) => void
+  widths: Record<string, number>
+  visibleColumns: Record<string, boolean>
 }
 
-const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isSettlement, upd, del, addItemAt }: SortableItemRowProps) {
+const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isSettlement, upd, del, addItemAt, widths, visibleColumns }: SortableItemRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
   const itemNameRef = useRef<HTMLTextAreaElement>(null)
@@ -67,10 +99,11 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
   const profit: number | null = execAmt !== null ? quoteAmt - execAmt : null
   const profitRate: number | null = execAmt !== null && quoteAmt > 0 ? (profit! / quoteAmt) * 100 : null
   const isMinus = profit !== null && profit < 0
+  const showCol = (key: string) => !isSettlement || visibleColumns[key] !== false
 
   return (
     <tr ref={setNodeRef} style={style} className={`group hover:bg-gray-50 ${isSettlement && isMinus ? 'bg-red-50 border-l-2 border-red-400' : ''}`}>
-      <td className="px-3 py-1.5 align-top flex items-start gap-1">
+      <td className="px-3 py-1.5 align-top flex items-start gap-1" style={isSettlement ? { width: widths.item_name } : undefined}>
         {isEditable && (
           <>
             <span {...attributes} {...listeners}
@@ -96,99 +129,131 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
           <span className="text-xs font-medium text-gray-800 whitespace-pre-wrap">{item.item_name}</span>
         )}
       </td>
-      <td className="px-3 py-1.5 align-top">
-        {isEditable ? (
-          <textarea ref={commentRef} value={item.comment ?? ''}
-            onChange={e => { upd(item.id, 'comment', e.target.value); autoResize(e.target) }}
-            onFocus={e => autoResize(e.target)}
-            placeholder="Comment"
-            rows={1}
-            className="w-full text-xs text-gray-400 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white resize-none overflow-hidden leading-relaxed" />
-        ) : (
-          <span className="text-xs text-gray-400 whitespace-pre-wrap">{item.comment}</span>
-        )}
-      </td>
-      <td className="px-3 py-1.5">
-        {isEditable ? (
-          <input value={item.unit}
-            onChange={e => upd(item.id, 'unit', e.target.value)}
-            className="w-full text-xs text-gray-500 text-center border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1 py-1 focus:outline-none bg-transparent focus:bg-white" />
-        ) : (
-          <span className="text-xs text-gray-500 block text-center">{item.unit}</span>
-        )}
-      </td>
-      <td className="px-3 py-1.5">
-        {isEditable ? (
-          <input type="text" value={String(item.quantity)}
-            onFocus={e => e.target.select()}
-            onChange={e => upd(item.id, 'quantity', Number(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
-            className={`w-full text-xs text-right border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white ${item.quantity === 0 ? 'text-red-400' : 'text-gray-700'}`} />
-        ) : (
-          <span className="text-xs text-gray-700 block text-right">{item.quantity}</span>
-        )}
-      </td>
-      <td className="px-3 py-1.5">
-        {isEditable ? (
-          <input type="text" value={String(item.material_unit_price)}
-            onFocus={e => e.target.select()}
-            onChange={e => upd(item.id, 'material_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
-            className="w-full text-xs text-right text-blue-700 font-medium border border-transparent hover:border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
-        ) : (
-          <span className="text-xs text-blue-700 font-medium block text-right">{fmt(item.material_unit_price)}</span>
-        )}
-      </td>
-      <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 bg-blue-50/40">{fmt(mat)}</td>
-      <td className="px-3 py-1.5">
-        {isEditable ? (
-          <input type="text" value={String(item.labor_unit_price)}
-            onFocus={e => e.target.select()}
-            onChange={e => upd(item.id, 'labor_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
-            className="w-full text-xs text-right text-amber-700 font-medium border border-transparent hover:border-amber-200 focus:border-amber-400 focus:ring-1 focus:ring-amber-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
-        ) : (
-          <span className="text-xs text-amber-700 font-medium block text-right">{fmt(item.labor_unit_price)}</span>
-        )}
-      </td>
-      <td className="px-3 py-1.5 text-right text-xs font-semibold text-amber-700 bg-amber-50/40">{fmt(lab)}</td>
-      <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-600">{fmt(item.material_unit_price + item.labor_unit_price)}</td>
-      <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700">{fmt(mat + lab)}</td>
+      {showCol('comment') && (
+        <td className="px-3 py-1.5 align-top" style={isSettlement ? { width: widths.comment } : undefined}>
+          {isEditable ? (
+            <textarea ref={commentRef} value={item.comment ?? ''}
+              onChange={e => { upd(item.id, 'comment', e.target.value); autoResize(e.target) }}
+              onFocus={e => autoResize(e.target)}
+              placeholder="Comment"
+              rows={1}
+              className="w-full text-xs text-gray-400 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white resize-none overflow-hidden leading-relaxed" />
+          ) : (
+            <span className="text-xs text-gray-400 whitespace-pre-wrap">{item.comment}</span>
+          )}
+        </td>
+      )}
+      {showCol('unit') && (
+        <td className="px-3 py-1.5" style={isSettlement ? { width: widths.unit } : undefined}>
+          {isEditable ? (
+            <input value={item.unit}
+              onChange={e => upd(item.id, 'unit', e.target.value)}
+              className="w-full text-xs text-gray-500 text-center border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1 py-1 focus:outline-none bg-transparent focus:bg-white" />
+          ) : (
+            <span className="text-xs text-gray-500 block text-center">{item.unit}</span>
+          )}
+        </td>
+      )}
+      {showCol('quantity') && (
+        <td className="px-3 py-1.5" style={isSettlement ? { width: widths.quantity } : undefined}>
+          {isEditable ? (
+            <input type="text" value={String(item.quantity)}
+              onFocus={e => e.target.select()}
+              onChange={e => upd(item.id, 'quantity', Number(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+              className={`w-full text-xs text-right border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white ${item.quantity === 0 ? 'text-red-400' : 'text-gray-700'}`} />
+          ) : (
+            <span className="text-xs text-gray-700 block text-right">{item.quantity}</span>
+          )}
+        </td>
+      )}
+      {showCol('material_unit_price') && (
+        <td className="px-3 py-1.5" style={isSettlement ? { width: widths.material_unit_price } : undefined}>
+          {isEditable ? (
+            <input type="text" value={String(item.material_unit_price)}
+              onFocus={e => e.target.select()}
+              onChange={e => upd(item.id, 'material_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
+              className="w-full text-xs text-right text-blue-700 font-medium border border-transparent hover:border-blue-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
+          ) : (
+            <span className="text-xs text-blue-700 font-medium block text-right">{fmt(item.material_unit_price)}</span>
+          )}
+        </td>
+      )}
+      {showCol('material_amount') && <td className="px-3 py-1.5 text-right text-xs font-semibold text-blue-700 bg-blue-50/40" style={isSettlement ? { width: widths.material_amount } : undefined}>{fmt(mat)}</td>}
+      {showCol('labor_unit_price') && (
+        <td className="px-3 py-1.5" style={isSettlement ? { width: widths.labor_unit_price } : undefined}>
+          {isEditable ? (
+            <input type="text" value={String(item.labor_unit_price)}
+              onFocus={e => e.target.select()}
+              onChange={e => upd(item.id, 'labor_unit_price', Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
+              className="w-full text-xs text-right text-amber-700 font-medium border border-transparent hover:border-amber-200 focus:border-amber-400 focus:ring-1 focus:ring-amber-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
+          ) : (
+            <span className="text-xs text-amber-700 font-medium block text-right">{fmt(item.labor_unit_price)}</span>
+          )}
+        </td>
+      )}
+      {showCol('labor_amount') && <td className="px-3 py-1.5 text-right text-xs font-semibold text-amber-700 bg-amber-50/40" style={isSettlement ? { width: widths.labor_amount } : undefined}>{fmt(lab)}</td>}
+      {showCol('total_unit_price') && <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-600" style={isSettlement ? { width: widths.total_unit_price } : undefined}>{fmt(item.material_unit_price + item.labor_unit_price)}</td>}
+      {showCol('total_amount') && <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700" style={isSettlement ? { width: widths.total_amount } : undefined}>{fmt(mat + lab)}</td>}
       {isSettlement && (
         <>
-          <td className="internal-only px-3 py-1.5">
-            <input type="text"
-              value={planned != null && planned > 0 ? String(planned) : ''}
-              onFocus={e => e.target.select()}
-              onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'planned_execution_amount', v === '' ? null : Number(v)) }}
-              placeholder="-"
-              className="w-full text-xs text-right text-violet-600 font-medium border border-transparent hover:border-violet-200 focus:border-violet-400 focus:ring-1 focus:ring-violet-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
-          </td>
-          <td className="internal-only px-3 py-1.5">
-            <input type="text"
-              value={actual != null && actual > 0 ? String(actual) : ''}
-              onFocus={e => e.target.select()}
-              onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'actual_execution_amount', v === '' ? null : Number(v)) }}
-              placeholder="-"
-              className="w-full text-xs text-right text-red-600 font-medium border border-transparent hover:border-red-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
-          </td>
-          <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profit === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profit !== null && !isActualBased ? 'italic opacity-70' : ''}`}>
-            {profit !== null ? (isMinus ? '' : '+') + profit.toLocaleString() : '-'}
-          </td>
-          <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profitRate === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profitRate !== null && !isActualBased ? 'italic opacity-70' : ''}`}>
-            {profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
-          </td>
+          {showCol('planned_execution') && (
+            <td className="internal-only px-3 py-1.5" style={{ width: widths.planned_execution }}>
+              <input type="text"
+                value={planned != null && planned > 0 ? String(planned) : ''}
+                onFocus={e => e.target.select()}
+                onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'planned_execution_amount', v === '' ? null : Number(v)) }}
+                placeholder="-"
+                className="w-full text-xs text-right text-violet-600 font-medium border border-transparent hover:border-violet-200 focus:border-violet-400 focus:ring-1 focus:ring-violet-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
+            </td>
+          )}
+          {showCol('execution_date') && (
+            <td className="internal-only px-3 py-1.5" style={{ width: widths.execution_date }}>
+              {isEditable ? (
+                <input type="date"
+                  value={item.execution_date ?? ''}
+                  onChange={e => upd(item.id, 'execution_date', e.target.value || null)}
+                  className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white" />
+              ) : (
+                <span className="text-xs text-gray-600">{item.execution_date ?? '-'}</span>
+              )}
+            </td>
+          )}
+          {showCol('actual_execution') && (
+            <td className="internal-only px-3 py-1.5" style={{ width: widths.actual_execution }}>
+              <input type="text"
+                value={actual != null && actual > 0 ? String(actual) : ''}
+                onFocus={e => e.target.select()}
+                onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'actual_execution_amount', v === '' ? null : Number(v)) }}
+                placeholder="-"
+                className="w-full text-xs text-right text-red-600 font-medium border border-transparent hover:border-red-200 focus:border-red-400 focus:ring-1 focus:ring-red-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
+            </td>
+          )}
+          {showCol('profit') && (
+            <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profit === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profit !== null && !isActualBased ? 'italic opacity-70' : ''}`} style={{ width: widths.profit }}>
+              {profit !== null ? (isMinus ? '' : '+') + profit.toLocaleString() : '-'}
+            </td>
+          )}
+          {showCol('profit_rate') && (
+            <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profitRate === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profitRate !== null && !isActualBased ? 'italic opacity-70' : ''}`} style={{ width: widths.profit_rate }}>
+              {profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
+            </td>
+          )}
         </>
       )}
-      <td className="px-3 py-1.5">
-        {isEditable ? (
-          <input value={item.note ?? ''}
-            onChange={e => upd(item.id, 'note', e.target.value)}
-            placeholder="비고"
-            className="w-full text-xs text-gray-400 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
-        ) : (
-          <span className="text-xs text-gray-400">{item.note}</span>
-        )}
-      </td>
+      {showCol('remark') && (
+        <td className="px-3 py-1.5" style={isSettlement ? { width: widths.remark } : undefined}>
+          {isEditable ? (
+            <input value={item.note ?? ''}
+              onChange={e => upd(item.id, 'note', e.target.value)}
+              placeholder="비고"
+              className="w-full text-xs text-gray-400 border border-transparent hover:border-gray-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white" />
+          ) : (
+            <span className="text-xs text-gray-400">{item.note}</span>
+          )}
+        </td>
+      )}
       {isEditable && (
-        <td className="no-print sticky right-0 w-8 px-2 py-1.5 bg-white group-hover:bg-gray-50">
+        <td className="no-print sticky right-0 w-8 px-2 py-1.5 bg-white group-hover:bg-gray-50" style={isSettlement ? { width: widths.delete } : undefined}>
           <button onClick={() => del(item.id)} className="text-gray-200 hover:text-red-500 p-1">
             <Trash2 size={12} />
           </button>
@@ -210,6 +275,32 @@ export default function QuoteDetailPage() {
   const [rates, setRates] = useState(DEFAULT_RATES)
   const [printMode, setPrintMode] = useState<null | 'client' | 'internal'>(null)
   const [minProfitRate, setMinProfitRate] = useState<number | null>(null)
+  const [worktypeMemos, setWorktypeMemos] = useState<Record<string, string>>({})
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return Object.fromEntries(TOGGLEABLE_COLUMNS.map(c => [c.key, true]))
+    try {
+      const saved = localStorage.getItem(COLUMN_VISIBILITY_KEY)
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return Object.fromEntries(TOGGLEABLE_COLUMNS.map(c => [c.key, true]))
+  })
+  const [showColumnSettings, setShowColumnSettings] = useState(false)
+  const columnSettingsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    try { localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(visibleColumns)) } catch {}
+  }, [visibleColumns])
+
+  useEffect(() => {
+    if (!showColumnSettings) return
+    const handle = (e: MouseEvent) => {
+      if (columnSettingsRef.current && !columnSettingsRef.current.contains(e.target as Node)) {
+        setShowColumnSettings(false)
+      }
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [showColumnSettings])
 
   useEffect(() => {
     if (!printMode) return
@@ -223,13 +314,21 @@ export default function QuoteDetailPage() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   const isSettlement = quote?.type === '정산'
   const isEditable = quote ? !checkReadonly(quote.status) : false
+  const { widths: itemResizableWidths, startResize: startItemResize } = useResizableColumns(
+    'romentor.quoteItemTable.settlement.colWidths', ITEM_DEFAULT_WIDTHS
+  )
+  const itemWidths = isSettlement ? itemResizableWidths : ITEM_DEFAULT_WIDTHS
+  const showCol = (key: string) => !isSettlement || visibleColumns[key] !== false
 
   useEffect(() => {
     const sb = createClient()
     Promise.all([
       sb.from('quotes').select('*, projects(name, min_profit_rate)').eq('id', id).single(),
-      sb.from('quote_items').select('*').eq('quote_id', id).order('created_at')
-    ]).then(([{ data: q }, { data: its }]) => {
+      sb.from('quote_items').select('*').eq('quote_id', id)
+        .order('sort_order', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true }),
+      sb.from('quote_worktype_memos').select('work_type, memo').eq('quote_id', id)
+    ]).then(([{ data: q }, { data: its }, { data: memos }]) => {
       setQuote(q)
       if (q) {
         setMinProfitRate(q.min_profit_rate ?? q.projects?.min_profit_rate ?? null)
@@ -246,6 +345,11 @@ export default function QuoteDetailPage() {
         if (q.discount_amount != null) {
           setDiscount(Number(q.discount_amount))
         }
+      }
+      if (memos) {
+        const map: Record<string, string> = {}
+        memos.forEach((m: { work_type: string; memo: string }) => { map[m.work_type] = m.memo })
+        setWorktypeMemos(map)
       }
       if (its) {
         const sorted = [...its].sort((a, b) => {
@@ -274,6 +378,9 @@ export default function QuoteDetailPage() {
   }, [])
 
   const addItemAt = useCallback(async (workType: string, afterId: string) => {
+    const maxSortOrder = items
+      .filter(i => i.work_type === workType)
+      .reduce((max, i) => Math.max(max, i.sort_order ?? -1), -1)
     const { data } = await createClient().from('quote_items').insert({
       quote_id: id,
       work_type: workType,
@@ -284,6 +391,7 @@ export default function QuoteDetailPage() {
       material_unit_price: 0,
       labor_unit_price: 0,
       note: '',
+      sort_order: maxSortOrder + 1,
     }).select().single()
     if (data) {
       setItems(prev => {
@@ -293,9 +401,12 @@ export default function QuoteDetailPage() {
         return next
       })
     }
-  }, [id])
+  }, [id, items])
 
   const addItem = useCallback(async (workType: string) => {
+    const maxSortOrder = items
+      .filter(i => i.work_type === workType)
+      .reduce((max, i) => Math.max(max, i.sort_order ?? -1), -1)
     const { data } = await createClient().from('quote_items').insert({
       quote_id: id,
       work_type: workType,
@@ -306,9 +417,10 @@ export default function QuoteDetailPage() {
       material_unit_price: 0,
       labor_unit_price: 0,
       note: '',
+      sort_order: maxSortOrder + 1,
     }).select().single()
     if (data) setItems(prev => [...prev, data])
-  }, [id])
+  }, [id, items])
 
   const handleDragEnd = useCallback((event: any) => {
     const { active, over } = event
@@ -352,6 +464,7 @@ export default function QuoteDetailPage() {
             planned_execution_amount: item.planned_execution_amount,
             actual_execution_amount: item.actual_execution_amount,
             execution_amount: effectiveExec,
+            execution_date: item.execution_date || null,
           }).eq('id', item.id)
         }))
 
@@ -360,6 +473,14 @@ export default function QuoteDetailPage() {
           alert(`❌ 저장 실패: ${failed[0].error?.message ?? '알 수 없는 오류'}`)
           setSaving(false)
           return
+        }
+
+        const memoEntries = Object.entries(worktypeMemos)
+          .filter(([, memo]) => memo && memo.trim())
+          .map(([work_type, memo]) => ({ quote_id: id, work_type, memo }))
+        if (memoEntries.length > 0) {
+          await sb.from('quote_worktype_memos')
+            .upsert(memoEntries, { onConflict: 'quote_id,work_type' })
         }
 
         const totalQuote = items.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
@@ -480,9 +601,11 @@ export default function QuoteDetailPage() {
     if (!newQuote) { alert('정산견적서 생성 실패'); return }
 
     const { data: srcItems } = await sb.from('quote_items').select('*').eq('quote_id', id)
+      .order('sort_order', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
     if (srcItems && srcItems.length > 0) {
       await sb.from('quote_items').insert(
-        srcItems.map(item => ({
+        srcItems.map((item, idx) => ({
           quote_id: newQuote.id,
           work_type: item.work_type,
           item_name: item.item_name,
@@ -492,7 +615,7 @@ export default function QuoteDetailPage() {
           material_unit_price: item.material_unit_price,
           labor_unit_price: item.labor_unit_price,
           note: item.note,
-          sort_order: item.sort_order,
+          sort_order: idx,
           planned_execution_amount: item.planned_execution_amount,
           actual_execution_amount: item.actual_execution_amount,
         }))
@@ -593,7 +716,46 @@ export default function QuoteDetailPage() {
         minProfitRate={minProfitRate ?? undefined}
         onRateChange={(key, value) => setRates(r => ({ ...r, [key]: value }))}
         onDiscountChange={setDiscount}
+        worktypeMemos={worktypeMemos}
+        onWorktypeMemoChange={(wt, memo) => setWorktypeMemos(prev => ({ ...prev, [wt]: memo }))}
       />
+
+      {/* 컬럼 설정 */}
+      {isSettlement && (
+        <div className="no-print flex justify-end mb-3">
+          <div className="relative" ref={columnSettingsRef}>
+            <button
+              onClick={() => setShowColumnSettings(v => !v)}
+              className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-md flex items-center gap-1.5 text-gray-600"
+            >
+              <span>⚙</span> 컬럼 설정
+            </button>
+            {showColumnSettings && (
+              <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[180px] z-50">
+                <div className="text-xs text-gray-500 mb-2 pb-2 border-b">표시할 컬럼 선택</div>
+                {TOGGLEABLE_COLUMNS.map(col => (
+                  <label key={col.key} className="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-50 px-1 rounded">
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns[col.key] ?? true}
+                      onChange={e => setVisibleColumns(prev => ({ ...prev, [col.key]: e.target.checked }))}
+                    />
+                    <span className="text-sm text-gray-700">{col.label}</span>
+                  </label>
+                ))}
+                <div className="mt-2 pt-2 border-t">
+                  <button
+                    onClick={() => setVisibleColumns(Object.fromEntries(TOGGLEABLE_COLUMNS.map(c => [c.key, true])))}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    모두 표시
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 공종별 테이블 */}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -615,29 +777,108 @@ export default function QuoteDetailPage() {
                 )}
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[1000px]">
+                <table className={`w-full text-sm min-w-[1000px]${isSettlement ? ' table-fixed' : ''}`}>
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-48">항목명</th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-56">Comment</th>
-                      <th className="px-3 py-2 text-center text-xs font-semibold text-gray-500 w-12">단위</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-16">수량</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-blue-500 w-28">재료단가</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-blue-600 w-28 bg-blue-50">재료금액</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-amber-500 w-28">노무단가</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-amber-600 w-28 bg-amber-50">노무금액</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 w-24">합계단가</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 w-28">합계금액</th>
+                      <th className={`px-3 py-2 text-left text-xs font-semibold text-gray-500 w-48${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.item_name } : undefined}>
+                        항목명
+                        {isSettlement && <ResizeHandle columnKey="item_name" onMouseDown={startItemResize} />}
+                      </th>
+                      {showCol('comment') && (
+                        <th className={`px-3 py-2 text-left text-xs font-semibold text-gray-500 w-56${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.comment } : undefined}>
+                          Comment
+                          {isSettlement && <ResizeHandle columnKey="comment" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('unit') && (
+                        <th className={`px-3 py-2 text-center text-xs font-semibold text-gray-500 w-12${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.unit } : undefined}>
+                          단위
+                          {isSettlement && <ResizeHandle columnKey="unit" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('quantity') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-gray-500 w-16${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.quantity } : undefined}>
+                          수량
+                          {isSettlement && <ResizeHandle columnKey="quantity" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('material_unit_price') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-blue-500 w-28${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.material_unit_price } : undefined}>
+                          재료단가
+                          {isSettlement && <ResizeHandle columnKey="material_unit_price" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('material_amount') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-blue-600 w-28 bg-blue-50${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.material_amount } : undefined}>
+                          재료금액
+                          {isSettlement && <ResizeHandle columnKey="material_amount" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('labor_unit_price') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-amber-500 w-28${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.labor_unit_price } : undefined}>
+                          노무단가
+                          {isSettlement && <ResizeHandle columnKey="labor_unit_price" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('labor_amount') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-amber-600 w-28 bg-amber-50${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.labor_amount } : undefined}>
+                          노무금액
+                          {isSettlement && <ResizeHandle columnKey="labor_amount" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('total_unit_price') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-gray-500 w-24${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.total_unit_price } : undefined}>
+                          합계단가
+                          {isSettlement && <ResizeHandle columnKey="total_unit_price" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {showCol('total_amount') && (
+                        <th className={`px-3 py-2 text-right text-xs font-semibold text-gray-700 w-28${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.total_amount } : undefined}>
+                          합계금액
+                          {isSettlement && <ResizeHandle columnKey="total_amount" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
                       {isSettlement && (
                         <>
-                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-violet-500 w-28">예상실행가</th>
-                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-red-500 w-28">실제실행가</th>
-                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-green-500 w-24">이윤</th>
-                          <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-green-500 w-20">이윤율</th>
+                          {showCol('planned_execution') && (
+                            <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-violet-500 relative" style={{ width: itemWidths.planned_execution }}>
+                              예상실행가
+                              <ResizeHandle columnKey="planned_execution" onMouseDown={startItemResize} />
+                            </th>
+                          )}
+                          {showCol('execution_date') && (
+                            <th className="internal-only px-3 py-2 text-center text-xs font-semibold text-blue-400 relative" style={{ width: itemWidths.execution_date }}>
+                              지출일
+                              <ResizeHandle columnKey="execution_date" onMouseDown={startItemResize} />
+                            </th>
+                          )}
+                          {showCol('actual_execution') && (
+                            <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-red-500 relative" style={{ width: itemWidths.actual_execution }}>
+                              실제실행가
+                              <ResizeHandle columnKey="actual_execution" onMouseDown={startItemResize} />
+                            </th>
+                          )}
+                          {showCol('profit') && (
+                            <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-green-500 relative" style={{ width: itemWidths.profit }}>
+                              이윤
+                              <ResizeHandle columnKey="profit" onMouseDown={startItemResize} />
+                            </th>
+                          )}
+                          {showCol('profit_rate') && (
+                            <th className="internal-only px-3 py-2 text-right text-xs font-semibold text-green-500 relative" style={{ width: itemWidths.profit_rate }}>
+                              이윤율
+                              <ResizeHandle columnKey="profit_rate" onMouseDown={startItemResize} />
+                            </th>
+                          )}
                         </>
                       )}
-                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500">비고</th>
-                      {isEditable && <th className="no-print sticky right-0 bg-gray-50 w-8 z-10"></th>}
+                      {showCol('remark') && (
+                        <th className={`px-3 py-2 text-left text-xs font-semibold text-gray-500${isSettlement ? ' relative' : ''}`} style={isSettlement ? { width: itemWidths.remark } : undefined}>
+                          비고
+                          {isSettlement && <ResizeHandle columnKey="remark" onMouseDown={startItemResize} />}
+                        </th>
+                      )}
+                      {isEditable && <th className="no-print sticky right-0 bg-gray-50 w-8 z-10" style={isSettlement ? { width: itemWidths.delete } : undefined}></th>}
                     </tr>
                   </thead>
                   <SortableContext items={gItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
@@ -651,6 +892,8 @@ export default function QuoteDetailPage() {
                           upd={updateItem}
                           del={deleteItem}
                           addItemAt={addItemAt}
+                          widths={itemWidths}
+                          visibleColumns={visibleColumns}
                         />
                       ))}
                       {(() => {
@@ -664,38 +907,55 @@ export default function QuoteDetailPage() {
                         }, 0)
                         const groupProfit: number | null = groupEffective > 0 ? groupQuote - groupEffective : null
                         const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
+                        const leadingSpan = 1 + (['comment', 'unit', 'quantity'] as const).filter(k => showCol(k)).length
+                        const trailingSpan = (showCol('remark') ? 1 : 0) + (isEditable ? 1 : 0)
                         return (
                           <tr className="bg-gray-50 border-t-2 border-gray-200">
-                            <td colSpan={4} className="px-3 py-2 text-xs font-bold text-gray-700 text-right">{wt} 합계</td>
-                            <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
-                            <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
-                              {fmt(gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0))}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
-                            <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
-                              {fmt(gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0))}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>
-                            <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
-                              {fmt(groupQuote)}
-                            </td>
+                            <td colSpan={leadingSpan} className="px-3 py-2 text-xs font-bold text-gray-700 text-right">{wt} 합계</td>
+                            {showCol('material_unit_price') && <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>}
+                            {showCol('material_amount') && (
+                              <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
+                                {fmt(gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0))}
+                              </td>
+                            )}
+                            {showCol('labor_unit_price') && <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>}
+                            {showCol('labor_amount') && (
+                              <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
+                                {fmt(gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0))}
+                              </td>
+                            )}
+                            {showCol('total_unit_price') && <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>}
+                            {showCol('total_amount') && (
+                              <td className="px-3 py-2 text-xs text-right font-bold text-gray-800 bg-gray-100">
+                                {fmt(groupQuote)}
+                              </td>
+                            )}
                             {isSettlement && (
                               <>
-                                <td className="internal-only px-3 py-2 text-xs text-right text-violet-600 font-bold">
-                                  {groupPlanned > 0 ? fmt(groupPlanned) : '-'}
-                                </td>
-                                <td className="internal-only px-3 py-2 text-xs text-right text-red-600 font-bold">
-                                  {groupActual > 0 ? fmt(groupActual) : '-'}
-                                </td>
-                                <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfit === null ? 'text-gray-300' : groupProfit < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                                  {groupProfit !== null ? (groupProfit >= 0 ? '+' : '') + fmt(groupProfit) : '-'}
-                                </td>
-                                <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfitRate === null ? 'text-gray-300' : groupProfitRate < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                                  {groupProfitRate !== null ? groupProfitRate.toFixed(1) + '%' : '-'}
-                                </td>
+                                {showCol('planned_execution') && (
+                                  <td className="internal-only px-3 py-2 text-xs text-right text-violet-600 font-bold">
+                                    {groupPlanned > 0 ? fmt(groupPlanned) : '-'}
+                                  </td>
+                                )}
+                                {showCol('execution_date') && <td className="internal-only px-3 py-2 text-xs text-gray-300 text-right">-</td>}
+                                {showCol('actual_execution') && (
+                                  <td className="internal-only px-3 py-2 text-xs text-right text-red-600 font-bold">
+                                    {groupActual > 0 ? fmt(groupActual) : '-'}
+                                  </td>
+                                )}
+                                {showCol('profit') && (
+                                  <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfit === null ? 'text-gray-300' : groupProfit < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                    {groupProfit !== null ? (groupProfit >= 0 ? '+' : '') + fmt(groupProfit) : '-'}
+                                  </td>
+                                )}
+                                {showCol('profit_rate') && (
+                                  <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfitRate === null ? 'text-gray-300' : groupProfitRate < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                    {groupProfitRate !== null ? groupProfitRate.toFixed(1) + '%' : '-'}
+                                  </td>
+                                )}
                               </>
                             )}
-                            <td colSpan={isEditable ? 2 : 1}></td>
+                            {trailingSpan > 0 && <td colSpan={trailingSpan}></td>}
                           </tr>
                         )
                       })()}
