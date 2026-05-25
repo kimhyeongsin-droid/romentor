@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
+import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed'
 
@@ -13,6 +13,7 @@ const nav = [
   { href: '/units', label: '단가 마스터', icon: BookOpen },
   { href: '/template', label: '기본 견적 포맷', icon: ClipboardList },
   { href: '/alerts', label: '알람 로그', icon: Bell },
+  { href: '/guide', label: '사용 가이드', icon: HelpCircle },
 ]
 
 export default function Sidebar() {
