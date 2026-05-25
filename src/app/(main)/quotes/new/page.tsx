@@ -8,13 +8,10 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { generateQuoteNumber } from '@/lib/utils'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
-import { DEFAULT_RATES } from '@/lib/quoteConstants'
+import { DEFAULT_RATES, SIZE_CATEGORIES } from '@/lib/quoteConstants'
 import { fetchCompanyRates } from '@/lib/companySettings'
 import { Plus, Trash2, GripVertical } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
-
-const SIZE_CATEGORIES = ['20평대','30평대','40평대','50평대','60평대','70평대','80평대','90평대','100평대이상']
-
 
 interface QuoteItem {
   tempId: string
@@ -263,6 +260,47 @@ function NewQuoteForm() {
     if (!templates || templates.length === 0) { alert('해당 평형대의 기본 포맷이 없습니다.'); return }
     if (!confirm(`${sizeCategory} 포맷 ${templates.length}개 항목을 불러올까요?\n기존 항목은 초기화됩니다.`)) return
 
+    const sorted = [...templates].sort((a: any, b: any) => {
+      if (a.work_type === '설계비용') return -1
+      if (b.work_type === '설계비용') return 1
+      return (WORK_ORDER.indexOf(a.work_type) - WORK_ORDER.indexOf(b.work_type)) || (a.sort_order - b.sort_order)
+    })
+    setItems(sorted.map((t: any, idx: number) => ({
+      tempId: `tmp_${t.id}_${idx}`,
+      work_type: t.work_type,
+      item_name: t.item_name,
+      comment: t.comment ?? '',
+      unit: t.unit,
+      quantity: t.quantity,
+      material_unit_price: t.material_unit_price ?? 0,
+      labor_unit_price: t.labor_unit_price ?? 0,
+      note: t.note ?? '',
+      sort_order: t.sort_order,
+    })))
+  }
+
+  const handleSizeChange = async (newSize: string) => {
+    if (newSize === sizeCategory) return
+    if (copyFromId) { setSizeCategory(newSize); return }
+
+    const sb = createClient()
+    const { data: templates } = await sb
+      .from('quote_templates')
+      .select('*')
+      .eq('size_category', newSize)
+      .order('sort_order')
+
+    if (!templates || templates.length === 0) {
+      alert(`${newSize} 포맷이 없습니다.`)
+      setSizeCategory(newSize)
+      return
+    }
+
+    if (items.length > 0) {
+      if (!confirm(`${newSize} 포맷 ${templates.length}개 항목을 불러올까요?\n기존 입력 항목은 초기화됩니다.`)) return
+    }
+
+    setSizeCategory(newSize)
     const sorted = [...templates].sort((a: any, b: any) => {
       if (a.work_type === '설계비용') return -1
       if (b.work_type === '설계비용') return 1
@@ -548,7 +586,7 @@ function NewQuoteForm() {
       {/* 평형대 탭 + 불러오기 */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {SIZE_CATEGORIES.map(size => (
-          <button key={size} onClick={() => setSizeCategory(size)}
+          <button key={size} onClick={() => handleSizeChange(size)}
             className={`text-sm px-4 py-1.5 rounded-full font-medium border transition-colors ${sizeCategory === size ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'}`}>
             {size}
           </button>

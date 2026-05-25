@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
+import { calcEffectiveExec, calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -67,6 +68,7 @@ interface SortableItemRowProps {
   item: QuoteItem
   isEditable: boolean
   isSettlement: boolean
+  minProfitRate: number | null
   upd: (id: string, key: keyof QuoteItem, value: any) => void
   del: (id: string) => void
   addItemAt: (workType: string, afterId: string) => void
@@ -74,7 +76,7 @@ interface SortableItemRowProps {
   visibleColumns: Record<string, boolean>
 }
 
-const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isSettlement, upd, del, addItemAt, widths, visibleColumns }: SortableItemRowProps) {
+const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, isSettlement, minProfitRate, upd, del, addItemAt, widths, visibleColumns }: SortableItemRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
   const itemNameRef = useRef<HTMLTextAreaElement>(null)
@@ -90,15 +92,12 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
   const fmt = (n: number) => n.toLocaleString()
 
   const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
-  const planned = item.planned_execution_amount
   const actual = item.actual_execution_amount
-  const execAmt: number | null = (actual != null && actual > 0) ? actual
-    : (planned != null && planned > 0) ? planned
-    : null
-  const isActualBased = actual != null && actual > 0
-  const profit: number | null = execAmt !== null ? quoteAmt - execAmt : null
-  const profitRate: number | null = execAmt !== null && quoteAmt > 0 ? (profit! / quoteAmt) * 100 : null
-  const isMinus = profit !== null && profit < 0
+  const { value: execValue, isProjected } = calcEffectiveExec(actual, quoteAmt, minProfitRate, isSettlement)
+  const isActualBased = actual !== null && actual !== undefined
+  const profit: number | null = (isActualBased || execValue > 0) && quoteAmt > 0 ? quoteAmt - execValue : null
+  const profitRate: number | null = profit !== null && quoteAmt > 0 ? (profit / quoteAmt) * 100 : null
+  const isMinus = profit !== null && profit < 0 && isActualBased
   const showCol = (key: string) => !isSettlement || visibleColumns[key] !== false
 
   return (
@@ -199,11 +198,17 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
           {showCol('planned_execution') && (
             <td className="internal-only px-3 py-1.5" style={{ width: widths.planned_execution }}>
               <input type="text"
-                value={planned != null && planned > 0 ? String(planned) : ''}
+                value={(item.planned_execution_amount ?? 0) > 0 ? item.planned_execution_amount!.toLocaleString() : ''}
+                placeholder={isSettlement && minProfitRate != null && quoteAmt > 0
+                  ? Math.floor(quoteAmt * (1 - minProfitRate / 100)).toLocaleString()
+                  : '-'}
                 onFocus={e => e.target.select()}
-                onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'planned_execution_amount', v === '' ? null : Number(v)) }}
-                placeholder="-"
-                className="w-full text-xs text-right text-violet-600 font-medium border border-transparent hover:border-violet-200 focus:border-violet-400 focus:ring-1 focus:ring-violet-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-300" />
+                onChange={e => {
+                  const v = e.target.value.replace(/[,\s]/g, '').replace(/[^0-9]/g, '')
+                  upd(item.id, 'planned_execution_amount', v === '' ? null : Number(v))
+                }}
+                className={`w-full text-xs text-right border border-transparent hover:border-violet-200 focus:border-violet-400 focus:ring-1 focus:ring-violet-200 rounded px-1.5 py-1 focus:outline-none bg-transparent focus:bg-white placeholder:text-gray-400 placeholder:italic ${(item.planned_execution_amount ?? 0) > 0 ? 'text-violet-600 font-medium' : 'text-gray-700'}`}
+              />
             </td>
           )}
           {showCol('execution_date') && (
@@ -221,7 +226,7 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
           {showCol('actual_execution') && (
             <td className="internal-only px-3 py-1.5" style={{ width: widths.actual_execution }}>
               <input type="text"
-                value={actual != null && actual > 0 ? String(actual) : ''}
+                value={actual !== null && actual !== undefined ? actual.toLocaleString() : ''}
                 onFocus={e => e.target.select()}
                 onChange={e => { const v = e.target.value.replace(/[^0-9]/g, ''); upd(item.id, 'actual_execution_amount', v === '' ? null : Number(v)) }}
                 placeholder="-"
@@ -229,12 +234,22 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
             </td>
           )}
           {showCol('profit') && (
-            <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profit === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profit !== null && !isActualBased ? 'italic opacity-70' : ''}`} style={{ width: widths.profit }}>
+            <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${
+              profit === null ? 'text-gray-300' :
+              isMinus ? 'bg-red-50 text-red-600' :
+              !isActualBased ? 'text-gray-400 italic' :
+              'bg-green-50 text-green-600'
+            }`} style={{ width: widths.profit }}>
               {profit !== null ? (isMinus ? '' : '+') + profit.toLocaleString() : '-'}
             </td>
           )}
           {showCol('profit_rate') && (
-            <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${profitRate === null ? 'text-gray-300' : isMinus ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} ${profitRate !== null && !isActualBased ? 'italic opacity-70' : ''}`} style={{ width: widths.profit_rate }}>
+            <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${
+              profitRate === null ? 'text-gray-300' :
+              isMinus ? 'bg-red-50 text-red-600' :
+              !isActualBased ? 'text-gray-400 italic' :
+              'bg-green-50 text-green-600'
+            }`} style={{ width: widths.profit_rate }}>
               {profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
             </td>
           )}
@@ -449,8 +464,8 @@ export default function QuoteDetailPage() {
 
       if (isSettlement) {
         const results = await Promise.all(items.map((item, idx) => {
-          const effectiveExec = (item.actual_execution_amount ?? 0) > 0
-            ? item.actual_execution_amount!
+          const effectiveExec = item.actual_execution_amount !== null && item.actual_execution_amount !== undefined
+            ? item.actual_execution_amount
             : (item.planned_execution_amount ?? 0)
           return sb.from('quote_items').update({
             item_name: item.item_name,
@@ -485,9 +500,8 @@ export default function QuoteDetailPage() {
 
         const totalQuote = items.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
         const totalExec = items.reduce((s, i) => {
-          const a = i.actual_execution_amount ?? 0
-          const p = i.planned_execution_amount ?? 0
-          return s + (a > 0 ? a : p)
+          const hasActual = i.actual_execution_amount !== null && i.actual_execution_amount !== undefined
+          return s + (hasActual ? i.actual_execution_amount! : (i.planned_execution_amount ?? 0))
         }, 0)
         if (totalExec > 0 && totalQuote > 0) {
           const currentRate = ((totalQuote - totalExec) / totalQuote) * 100
@@ -510,8 +524,9 @@ export default function QuoteDetailPage() {
 
           const workTypeMap: Record<string, { quote: number; actual: number }> = {}
           for (const item of items) {
-            const actual = item.actual_execution_amount ?? 0
-            if (actual <= 0) continue
+            const hasActual = item.actual_execution_amount !== null && item.actual_execution_amount !== undefined
+            if (!hasActual) continue
+            const actual = item.actual_execution_amount!
             if (!workTypeMap[item.work_type]) workTypeMap[item.work_type] = { quote: 0, actual: 0 }
             workTypeMap[item.work_type].quote += (item.material_unit_price + item.labor_unit_price) * item.quantity
             workTypeMap[item.work_type].actual += actual
@@ -558,7 +573,13 @@ export default function QuoteDetailPage() {
         rate_profit_margin: rates.profit / 100,
         rate_vat: rates.vat / 100,
         discount_amount: discount || 0,
+        ...(isSettlement && { min_profit_rate: minProfitRate ?? 15 }),
       }).eq('id', id)
+
+      // trg_quotes_discount(BEFORE trigger)가 discount_amount 변경 시 final_amount를
+      // 하드코딩 요율로 덮어쓰므로, 별도 UPDATE로 커스텀 요율 기반 정확한 값을 재기록
+      const { finalAmount } = calcFinalAmount({ items, rates, discount: discount || 0 })
+      await sb.from('quotes').update({ final_amount: finalAmount }).eq('id', id)
 
       setSaving(false)
       alert('✅ 저장됐습니다.')
@@ -714,6 +735,7 @@ export default function QuoteDetailPage() {
         isEditable={isEditable}
         isContract={isSettlement}
         minProfitRate={minProfitRate ?? undefined}
+        onMinProfitRateChange={v => setMinProfitRate(v)}
         onRateChange={(key, value) => setRates(r => ({ ...r, [key]: value }))}
         onDiscountChange={setDiscount}
         worktypeMemos={worktypeMemos}
@@ -766,7 +788,7 @@ export default function QuoteDetailPage() {
                 <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
                 <span className="text-xs text-gray-400">{gItems.length}개</span>
                 {isSettlement && (() => {
-                  const actualCount = gItems.filter(i => (i.actual_execution_amount ?? 0) > 0).length
+                  const actualCount = gItems.filter(i => i.actual_execution_amount !== null && i.actual_execution_amount !== undefined).length
                   return <span className="text-xs text-gray-400 ml-1">{actualCount}/{gItems.length} 실입력</span>
                 })()}
                 {isEditable && (
@@ -889,6 +911,7 @@ export default function QuoteDetailPage() {
                           item={item}
                           isEditable={isEditable}
                           isSettlement={isSettlement}
+                          minProfitRate={minProfitRate}
                           upd={updateItem}
                           del={deleteItem}
                           addItemAt={addItemAt}
@@ -901,11 +924,11 @@ export default function QuoteDetailPage() {
                         const groupPlanned = gItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
                         const groupActual = gItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
                         const groupEffective = gItems.reduce((s, i) => {
-                          const a = i.actual_execution_amount ?? 0
-                          const p = i.planned_execution_amount ?? 0
-                          return s + (a > 0 ? a : p)
+                          const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
+                          return s + calcEffectiveExec(i.actual_execution_amount, qa, minProfitRate, isSettlement).value
                         }, 0)
-                        const groupProfit: number | null = groupEffective > 0 ? groupQuote - groupEffective : null
+                        const groupIsComplete = isGroupComplete(gItems)
+                        const groupProfit: number | null = (groupIsComplete || groupEffective > 0) ? groupQuote - groupEffective : null
                         const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
                         const leadingSpan = 1 + (['comment', 'unit', 'quantity'] as const).filter(k => showCol(k)).length
                         const trailingSpan = (showCol('remark') ? 1 : 0) + (isEditable ? 1 : 0)
@@ -940,16 +963,24 @@ export default function QuoteDetailPage() {
                                 {showCol('execution_date') && <td className="internal-only px-3 py-2 text-xs text-gray-300 text-right">-</td>}
                                 {showCol('actual_execution') && (
                                   <td className="internal-only px-3 py-2 text-xs text-right text-red-600 font-bold">
-                                    {groupActual > 0 ? fmt(groupActual) : '-'}
+                                    {groupIsComplete || groupActual > 0 ? fmt(groupActual) : '-'}
                                   </td>
                                 )}
                                 {showCol('profit') && (
-                                  <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfit === null ? 'text-gray-300' : groupProfit < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                  <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${
+                                    groupProfit === null ? 'text-gray-300' :
+                                    !groupIsComplete ? 'text-gray-400 italic' :
+                                    groupProfit < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+                                  }`}>
                                     {groupProfit !== null ? (groupProfit >= 0 ? '+' : '') + fmt(groupProfit) : '-'}
                                   </td>
                                 )}
                                 {showCol('profit_rate') && (
-                                  <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${groupProfitRate === null ? 'text-gray-300' : groupProfitRate < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                  <td className={`internal-only px-3 py-2 text-xs text-right font-bold ${
+                                    groupProfitRate === null ? 'text-gray-300' :
+                                    !groupIsComplete ? 'text-gray-400 italic' :
+                                    groupProfitRate < 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+                                  }`}>
                                     {groupProfitRate !== null ? groupProfitRate.toFixed(1) + '%' : '-'}
                                   </td>
                                 )}

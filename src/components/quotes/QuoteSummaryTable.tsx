@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
+import { calcEffectiveExec, calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
@@ -33,6 +34,7 @@ interface Props {
   isEditable: boolean
   isContract: boolean
   minProfitRate?: number
+  onMinProfitRateChange?: (value: number) => void
   onRateChange: (key: keyof Rates, value: number) => void
   onDiscountChange: (value: number) => void
   worktypeMemos?: Record<string, string>
@@ -47,7 +49,7 @@ const SUMMARY_DEFAULT_WIDTHS = {
 }
 
 export default function QuoteSummaryTable({
-  items, rates, discount, open, onToggle, isEditable, isContract, minProfitRate, onRateChange, onDiscountChange, worktypeMemos = {}, onWorktypeMemoChange,
+  items, rates, discount, open, onToggle, isEditable, isContract, minProfitRate, onMinProfitRateChange, onRateChange, onDiscountChange, worktypeMemos = {}, onWorktypeMemoChange,
 }: Props) {
   const [rawDiscount, setRawDiscount] = useState<string | null>(null)
   const { widths: resizableSummaryWidths, startResize: startSummaryResize } = useResizableColumns(
@@ -63,38 +65,50 @@ export default function QuoteSummaryTable({
     const actualExec = wtItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
     const plannedExec = wtItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
     const effectiveExec = wtItems.reduce((s, i) => {
-      const a = i.actual_execution_amount ?? 0
-      const p = i.planned_execution_amount ?? 0
-      return s + (a > 0 ? a : p)
+      const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
+      return s + calcEffectiveExec(i.actual_execution_amount ?? null, qa, minProfitRate, isContract /* 정산 여부 */).value
     }, 0)
-    const profit: number | null = effectiveExec > 0 ? total - effectiveExec : null
+    const isComplete = isGroupComplete(wtItems)
+    const profit: number | null = (isComplete || effectiveExec > 0) ? total - effectiveExec : null
     const profitRate: number | null = profit !== null && total > 0 ? (profit / total) * 100 : null
-    return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, plannedExec, effectiveExec, profit, profitRate }
+    return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, plannedExec, effectiveExec, profit, profitRate, isComplete }
   })
 
   const directMaterial = summaryRows.reduce((s, r) => s + r.materialTotal, 0)
   const directLabor    = summaryRows.reduce((s, r) => s + r.laborTotal, 0)
-  const directTotal    = directMaterial + directLabor
+  const {
+    directTotal,
+    indirectAccident,
+    indirectEmployment,
+    indirectOverhead,
+    indirectProfit,
+    indirectTotal,
+    vat,
+    finalAmount: finalTotal,
+  } = calcFinalAmount({
+    items: [{ material_unit_price: 0, labor_unit_price: 0, quantity: 0, material_amount: directMaterial, labor_amount: directLabor }],
+    rates,
+    discount,
+  })
 
-  const indirectAccident   = Math.floor(directLabor * rates.accident / 100)
-  const indirectEmployment = Math.floor(directLabor * rates.employment / 100)
-  const indirectOverhead   = Math.floor(directTotal * rates.overhead / 100)
-  const indirectProfit     = Math.floor(directTotal * rates.profit / 100)
-  const indirectTotal      = indirectAccident + indirectEmployment + indirectOverhead + indirectProfit
-  const vat                = Math.floor((directTotal + indirectTotal) * rates.vat / 100)
-  const finalTotal         = directTotal + indirectTotal + vat + discount
-
-  const totalActualExec = items.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
-  const totalEffectiveExec = items.reduce((s, i) => {
-    const a = i.actual_execution_amount ?? 0
-    const p = i.planned_execution_amount ?? 0
-    return s + (a > 0 ? a : p)
-  }, 0)
-  // 이윤 기준: 직접공사비 - 실행금액 (간접비/VAT 제외)
-  const totalProfit         = totalEffectiveExec > 0 ? directTotal - totalEffectiveExec : null
-  const totalProfitRate     = totalProfit !== null && directTotal > 0 ? (totalProfit / directTotal) * 100 : null
-  const totalActualProfit   = totalActualExec > 0 ? directTotal - totalActualExec : null
-  const totalActualProfitRate = totalActualProfit !== null && directTotal > 0 ? (totalActualProfit / directTotal) * 100 : null
+  // 확정 공종 기준 집계 (공종 내 모든 행 actual 입력 완료된 공종만 포함)
+  const groupedByWt = items.reduce((acc, i) => {
+    const wt = i.work_type || '기타'
+    if (!acc[wt]) acc[wt] = []
+    acc[wt].push(i)
+    return acc
+  }, {} as Record<string, typeof items>)
+  const nonEmptyGroups = Object.values(groupedByWt).filter(g => g.length > 0)
+  const totalGroups = nonEmptyGroups.length
+  const completedGroups = nonEmptyGroups.filter(g => isGroupComplete(g)).length
+  const completedGroupItems = nonEmptyGroups.filter(g => isGroupComplete(g)).flat()
+  const totalActualExec = completedGroupItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+  const totalActualQuoteSum = completedGroupItems.reduce(
+    (s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0
+  )
+  const totalActualProfit = totalActualQuoteSum > 0 ? totalActualQuoteSum - totalActualExec : null
+  const totalActualProfitRate = totalActualProfit !== null && totalActualQuoteSum > 0
+    ? (totalActualProfit / totalActualQuoteSum) * 100 : null
 
   // 계약 모드: 9컬럼 (기본5 + 실행금액/이윤/이윤율/메모), 일반: 5컬럼
   const totalCols = isContract ? 9 : 5
@@ -108,6 +122,26 @@ export default function QuoteSummaryTable({
         <span className="font-bold text-gray-900 text-sm">견적 합계표</span>
         <ChevronDown size={16} className={`text-gray-400 transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
       </button>
+
+      {isContract && (
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-3 text-sm">
+          <span className="text-gray-600 font-medium">목표 이윤율</span>
+          <input
+            type="number"
+            value={minProfitRate ?? 15}
+            min={0}
+            max={100}
+            step={1}
+            onChange={e => {
+              const v = e.target.value === '' ? 15 : Number(e.target.value)
+              onMinProfitRateChange?.(isNaN(v) ? 15 : v)
+            }}
+            className="w-20 text-center border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400"
+          />
+          <span className="text-gray-500">%</span>
+          <span className="text-xs text-gray-400">(기준: 직접공사비 합계)</span>
+        </div>
+      )}
 
       {open && (
         <div className="overflow-x-auto">
@@ -171,42 +205,44 @@ export default function QuoteSummaryTable({
                   <td className="px-4 py-2 text-xs text-blue-700 text-right">{fmt(row.materialTotal)}</td>
                   <td className="px-4 py-2 text-xs text-amber-700 text-right">{fmt(row.laborTotal)}</td>
                   <td className="px-4 py-2 text-xs text-gray-800 font-semibold text-right">{fmt(row.total)}</td>
-                  {isContract && (() => {
-                    const isActual = row.actualExec > 0
-                    const italicCls = !isActual && row.effectiveExec > 0 ? 'italic opacity-70' : ''
-                    return (
-                      <>
-                        <td className={`internal-only px-4 py-2 text-xs text-right ${row.effectiveExec > 0 ? (isActual ? 'text-red-600' : 'text-gray-400') : 'text-gray-300'} ${italicCls}`}>
-                          {row.effectiveExec > 0 ? fmt(row.effectiveExec) : '-'}
-                        </td>
-                        <td className={`internal-only px-4 py-2 text-xs font-semibold text-right ${
-                          row.profit === null ? 'text-gray-300' :
-                          row.profit < 0 ? 'text-red-600' : 'text-green-600'
-                        } ${italicCls}`}>
-                          {row.profit !== null ? (row.profit >= 0 ? '+' : '') + fmt(row.profit) : '-'}
-                        </td>
-                        <td className={`internal-only px-4 py-2 text-xs font-semibold text-right ${
-                          row.profitRate === null ? 'text-gray-300' :
-                          row.profit! < 0 ? 'text-red-600' : 'text-green-600'
-                        } ${italicCls}`}>
-                          {row.profitRate !== null ? row.profitRate.toFixed(1) + '%' : '-'}
-                        </td>
-                        <td className="internal-only px-4 py-2">
-                          {isEditable ? (
-                            <input
-                              type="text"
-                              value={worktypeMemos[row.wt] ?? ''}
-                              onChange={e => onWorktypeMemoChange?.(row.wt, e.target.value)}
-                              placeholder="-"
-                              className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white placeholder:text-gray-300"
-                            />
-                          ) : (
-                            <span className="text-xs text-gray-600">{worktypeMemos[row.wt] ?? '-'}</span>
-                          )}
-                        </td>
-                      </>
-                    )
-                  })()}
+                  {isContract && (
+                    <>
+                      <td className={`internal-only px-4 py-2 text-xs text-right ${
+                        row.isComplete || row.effectiveExec > 0
+                          ? (row.isComplete ? 'text-red-600' : 'text-gray-400 italic')
+                          : 'text-gray-300'
+                      }`}>
+                        {row.isComplete || row.effectiveExec > 0 ? fmt(row.effectiveExec) : '-'}
+                      </td>
+                      <td className={`internal-only px-4 py-2 text-xs font-semibold text-right ${
+                        row.profit === null ? 'text-gray-300' :
+                        !row.isComplete ? 'text-gray-400 italic' :
+                        row.profit < 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {row.profit !== null ? (row.profit >= 0 ? '+' : '') + fmt(row.profit) : '-'}
+                      </td>
+                      <td className={`internal-only px-4 py-2 text-xs font-semibold text-right ${
+                        row.profitRate === null ? 'text-gray-300' :
+                        !row.isComplete ? 'text-gray-400 italic' :
+                        row.profit! < 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {row.profitRate !== null ? row.profitRate.toFixed(1) + '%' : '-'}
+                      </td>
+                      <td className="internal-only px-4 py-2">
+                        {isEditable ? (
+                          <input
+                            type="text"
+                            value={worktypeMemos[row.wt] ?? ''}
+                            onChange={e => onWorktypeMemoChange?.(row.wt, e.target.value)}
+                            placeholder="-"
+                            className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white placeholder:text-gray-300"
+                          />
+                        ) : (
+                          <span className="text-xs text-gray-600">{worktypeMemos[row.wt] ?? '-'}</span>
+                        )}
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
 
@@ -218,20 +254,20 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-2.5 text-xs text-gray-900 font-bold text-right">{fmt(directTotal)}</td>
                 {isContract && (
                   <>
-                    <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${totalEffectiveExec > 0 ? 'text-red-600' : 'text-gray-300'}`}>
-                      {totalEffectiveExec > 0 ? fmt(totalEffectiveExec) : '-'}
+                    <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${completedGroups > 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                      {completedGroups > 0 ? fmt(totalActualExec) : '-'}
                     </td>
                     <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${
-                      totalProfitRate === null ? 'text-gray-300' :
-                      totalProfit! < 0 ? 'text-red-700' : 'text-green-700'
+                      totalActualProfit === null ? 'text-gray-300' :
+                      totalActualProfit < 0 ? 'text-red-700' : 'text-green-700'
                     }`}>
-                      {totalProfitRate !== null ? (totalProfit! >= 0 ? '+' : '') + fmt(totalProfit!) : '-'}
+                      {totalActualProfit !== null ? (totalActualProfit >= 0 ? '+' : '') + fmt(totalActualProfit) : '-'}
                     </td>
                     <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${
-                      totalProfitRate === null ? 'text-gray-300' :
-                      totalProfit! < 0 ? 'text-red-700' : 'text-green-700'
+                      totalActualProfitRate === null ? 'text-gray-300' :
+                      totalActualProfit! < 0 ? 'text-red-700' : 'text-green-700'
                     }`}>
-                      {totalProfitRate !== null ? totalProfitRate.toFixed(1) + '%' : '-'}
+                      {totalActualProfitRate !== null ? totalActualProfitRate.toFixed(1) + '%' : '-'}
                     </td>
                     <td className="internal-only px-4 py-2.5 text-xs text-gray-300">-</td>
                   </>
@@ -355,63 +391,34 @@ export default function QuoteSummaryTable({
                 )}
               </tr>
 
-              {/* 실행가 요약 (계약 + 실행금액 있을 때만) */}
-              {isContract && totalEffectiveExec > 0 && (
+              {/* 실행가 요약 (계약 + 실제 실행금액 있을 때만) */}
+              {isContract && completedGroups > 0 && (
                 <>
-                  {totalActualExec > 0 && (
-                    <tr className={`internal-only ${totalActualProfit !== null && totalActualProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
-                        실행금액 합계 <span className="font-normal text-gray-400 text-xs">(실제)</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalActualExec)} 원</td>
-                    </tr>
-                  )}
-                  <tr className={`internal-only ${totalProfit !== null && totalProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                    <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
-                      실행금액 합계 <span className="font-normal text-gray-400 text-xs">(예상 포함)</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalEffectiveExec)} 원</td>
+                  <tr className={`internal-only ${totalActualProfit !== null && totalActualProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+                    <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">현재까지 실행금액 합계</td>
+                    <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalActualExec)} 원</td>
                   </tr>
-                  {totalActualExec > 0 && totalActualProfit !== null && (
+                  {totalActualProfit !== null && (
                     <tr className={`internal-only ${totalActualProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
                       <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
-                        이윤 (실제) {totalActualProfit < 0 ? '⚠️ 마이너스!' : ''}
+                        현재까지 이윤 (확정분 · {completedGroups}/{totalGroups} 공종){totalActualProfit < 0 ? ' ⚠️ 마이너스!' : ''}
+                        {totalActualProfitRate !== null && (
+                          <span className={`ml-2 font-normal ${totalActualProfitRate < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            ({totalActualProfitRate.toFixed(1)}%)
+                          </span>
+                        )}
                       </td>
                       <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
                         {fmt(totalActualProfit)} 원
                       </td>
                     </tr>
                   )}
-                  <tr className={`internal-only ${totalProfit !== null && totalProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                    <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
-                      이윤 (예상 포함) {totalProfit !== null && totalProfit < 0 ? '⚠️ 마이너스!' : ''}
-                    </td>
-                    <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfit !== null && totalProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                      {totalProfit !== null ? fmt(totalProfit) + ' 원' : '-'}
-                    </td>
-                  </tr>
-                  {totalActualExec > 0 && totalActualProfitRate !== null && (
-                    <tr className={`internal-only ${totalActualProfitRate < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">이윤율 (실제)</td>
-                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfitRate < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                        {totalActualProfitRate.toFixed(1)}%
-                      </td>
-                    </tr>
-                  )}
-                  {totalProfitRate !== null && (
-                    <tr className={`internal-only ${totalProfitRate < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">이윤율 (예상 포함)</td>
-                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfitRate < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                        {totalProfitRate.toFixed(1)}%
-                      </td>
-                    </tr>
-                  )}
-                  {minProfitRate != null && totalProfitRate !== null && (
-                    <tr className={`internal-only ${totalProfitRate >= minProfitRate ? 'bg-green-50' : 'bg-red-50'}`}>
+                  {minProfitRate != null && totalActualProfitRate !== null && (
+                    <tr className={`internal-only ${totalActualProfitRate >= minProfitRate ? 'bg-green-50' : 'bg-red-50'}`}>
                       <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
-                        목표 이윤율 {totalProfitRate >= minProfitRate ? '✓ 달성' : '✗ 미달'}
+                        목표 이윤율 {totalActualProfitRate >= minProfitRate ? '✓ 달성' : '✗ 미달'}
                       </td>
-                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalProfitRate >= minProfitRate ? 'text-green-700' : 'text-red-700'}`}>
+                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfitRate >= minProfitRate ? 'text-green-700' : 'text-red-700'}`}>
                         {minProfitRate}%
                       </td>
                     </tr>

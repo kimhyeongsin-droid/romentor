@@ -35,3 +35,34 @@ export async function generateQuoteNumber(sb: SupabaseClient<any, any, any>): Pr
 export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ')
 }
+
+export function getPersonNames(
+  list: { name?: string | null }[] | null | undefined,
+  legacyName?: string | null
+): string[] {
+  const names = Array.isArray(list)
+    ? list.map(p => p?.name?.trim()).filter((n): n is string => !!n)
+    : []
+  if (names.length === 0 && legacyName?.trim()) return [legacyName.trim()]
+  return names
+}
+
+export function formatPersonList(
+  list: { name?: string | null }[] | null | undefined,
+  legacyName?: string | null
+): { display: string; full: string } {
+  const names = Array.isArray(list)
+    ? list.map(p => p?.name?.trim()).filter((n): n is string => !!n)
+    : []
+
+  if (names.length === 0 && legacyName?.trim()) {
+    return { display: legacyName.trim(), full: legacyName.trim() }
+  }
+
+  if (names.length === 0) return { display: '-', full: '' }
+  if (names.length === 1) return { display: names[0], full: names[0] }
+  return {
+    display: `${names[0]} +${names.length - 1}명`,
+    full: names.join(', '),
+  }
+}

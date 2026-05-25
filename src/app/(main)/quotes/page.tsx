@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { ArrowDown, ArrowUp, Copy, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
-import { formatKRW } from '@/lib/utils'
+import { formatKRW, getPersonNames } from '@/lib/utils'
 import { QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
@@ -60,7 +60,7 @@ function QuotesContent() {
   async function load() {
     let query = createClient()
       .from('quotes')
-      .select('id, quote_number, type, status, final_amount, note, updated_at, projects(name, client_name, manager_name, designer_name, site_manager_name)')
+      .select('id, quote_number, type, status, final_amount, note, updated_at, projects(name, client_name, manager_name, designer_name, site_manager_name, pms, designers, site_managers)')
       .order('created_at', { ascending: false })
 
     if (projectId) {
@@ -231,7 +231,7 @@ function QuotesContent() {
               </tr>
             )}
             {sorted.map((q) => (
-              <tr key={q.id} className="hover:bg-gray-50">
+              <tr key={q.id} className="hover:bg-gray-50 align-top">
                 <td className="px-3 py-2.5 overflow-hidden">
                   <div className="font-mono text-xs text-gray-600 truncate">{q.quote_number}</div>
                   {q.updated_at && (
@@ -256,15 +256,24 @@ function QuotesContent() {
                 <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
                   <div className="truncate">{q.projects?.client_name}</div>
                 </td>
-                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{q.projects?.manager_name || '-'}</div>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{q.projects?.designer_name || '-'}</div>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{q.projects?.site_manager_name || '-'}</div>
-                </td>
+                {(() => {
+                  const pmNames  = getPersonNames(q.projects?.pms,          q.projects?.manager_name)
+                  const desNames = getPersonNames(q.projects?.designers,     q.projects?.designer_name)
+                  const smNames  = getPersonNames(q.projects?.site_managers, q.projects?.site_manager_name)
+                  return (
+                    <>
+                      <td className="px-3 py-2.5 text-xs text-gray-600">
+                        {pmNames.length === 0 ? '-' : pmNames.map((n, i) => <div key={i}>{n}</div>)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-gray-600">
+                        {desNames.length === 0 ? '-' : desNames.map((n, i) => <div key={i}>{n}</div>)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-gray-600">
+                        {smNames.length === 0 ? '-' : smNames.map((n, i) => <div key={i}>{n}</div>)}
+                      </td>
+                    </>
+                  )
+                })()}
                 <td className="px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap">{formatKRW(q.final_amount)}</td>
                 <td className="px-3 py-2.5">
                   <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${QUOTE_STATUS_COLOR[q.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'}`}>

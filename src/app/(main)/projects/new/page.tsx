@@ -18,7 +18,6 @@ export default function NewProjectPage() {
   const [pms, setPms] = useState<Member[]>([{ name: '', phone: '', notify: true }])
   const [designers, setDesigners] = useState<Member[]>([])
   const [siteManagers, setSiteManagers] = useState<Member[]>([])
-  const [minProfitRate, setMinProfitRate] = useState(15)
   const [loading, setLoading] = useState(false)
 
   const handleUnitToggle = (unit: 'sqm' | 'py') => {
@@ -72,7 +71,7 @@ export default function NewProjectPage() {
       pms: pms.filter(m => m.name),
       designers: designers.filter(m => m.name),
       site_managers: siteManagers.filter(m => m.name),
-      min_profit_rate: minProfitRate,
+      min_profit_rate: 15,
     })
     if (!error) router.push('/projects')
     else { alert('저장 실패: ' + error.message); setLoading(false) }
@@ -126,17 +125,6 @@ export default function NewProjectPage() {
             </select>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">목표 이윤율 (%)</label>
-            <input
-              type="number"
-              value={minProfitRate}
-              onChange={e => setMinProfitRate(Number(e.target.value))}
-              min={0} max={100} step={0.1}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예) 15"
-            />
-          </div>
         </div>
 
         {/* 고객님 */}

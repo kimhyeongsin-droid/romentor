@@ -24,7 +24,6 @@ export default function ProjectEditPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [basicForm, setBasicForm] = useState({ name: '', address: '', area_sqm: '', status: 'draft' })
-  const [minProfitRate, setMinProfitRate] = useState(15)
   const [clients, setClients] = useState<Member[]>([{ name: '', phone: '', notify: true }])
   const [pms, setPms] = useState<Member[]>([{ name: '', phone: '', notify: true }])
   const [designers, setDesigners] = useState<Member[]>([])
@@ -44,7 +43,6 @@ export default function ProjectEditPage() {
             area_sqm: data.area_sqm != null ? String(data.area_sqm) : '',
             status: data.status ?? 'draft',
           })
-          setMinProfitRate(data.min_profit_rate ?? 15)
           // JSONB 배열 우선, 없으면 레거시 필드 폴백 (notify 기본값 true)
           setClients(
             Array.isArray(data.clients) && data.clients.length > 0
@@ -113,7 +111,6 @@ export default function ProjectEditPage() {
       pms: pms.filter(m => m.name),
       designers: designers.filter(m => m.name),
       site_managers: siteManagers.filter(m => m.name),
-      min_profit_rate: minProfitRate,
     }).eq('id', id)
     setSaving(false)
     if (!error) router.push('/projects')
@@ -164,17 +161,6 @@ export default function ProjectEditPage() {
                 {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">목표 이윤율 (%)</label>
-            <input
-              type="number"
-              value={minProfitRate}
-              onChange={e => setMinProfitRate(Number(e.target.value))}
-              min={0} max={100} step={0.1}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예) 15"
-            />
           </div>
         </div>
 

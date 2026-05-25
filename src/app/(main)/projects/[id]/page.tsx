@@ -4,7 +4,19 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ArrowLeft, FileText, TrendingUp, TrendingDown, AlertTriangle, Plus, Copy } from 'lucide-react'
-import { QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
+import { DEFAULT_RATES, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
+import { calcQuoteSummary } from '@/lib/quote-calc'
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+function ratesFromQuote(q: any) {
+  return {
+    accident:   q.rate_accident_insurance   != null ? round2(Number(q.rate_accident_insurance)   * 100) : DEFAULT_RATES.accident,
+    employment: q.rate_employment_insurance != null ? round2(Number(q.rate_employment_insurance) * 100) : DEFAULT_RATES.employment,
+    overhead:   q.rate_indirect_overhead    != null ? round2(Number(q.rate_indirect_overhead)    * 100) : DEFAULT_RATES.overhead,
+    profit:     q.rate_profit_margin        != null ? round2(Number(q.rate_profit_margin)        * 100) : DEFAULT_RATES.profit,
+    vat:        q.rate_vat                  != null ? round2(Number(q.rate_vat)                  * 100) : DEFAULT_RATES.vat,
+  }
+}
 
 const fmt = (n: number) => n?.toLocaleString() ?? '0'
 const fmtRate = (n: number) => (n ? n.toFixed(1) : '0')
@@ -44,19 +56,22 @@ export default function ProjectDetailPage() {
     })
   }, [id])
 
-  const contractQuotes = quotes.filter(q => q.status === '계약')
-  const latestContract = contractQuotes[contractQuotes.length - 1]
-  const latestItems = latestContract ? (quoteItems[latestContract.id] ?? []) : []
+  const settlementQuotes = quotes
+    .filter(q => q.type === '정산')
+    .slice()
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+  const latestSettlement = settlementQuotes[0]
+  const latestItems = latestSettlement ? (quoteItems[latestSettlement.id] ?? []) : []
 
-  const totalExecutionAmount = Number(latestContract?.total_execution_amount ?? 0)
-  const totalProfit = Number(latestContract?.total_profit ?? 0)
-  const profitRate = Number(latestContract?.total_profit_rate ?? 0)
-
-  const minusItems = latestItems.filter(i => {
-    const quoteAmt = (i.material_unit_price + i.labor_unit_price) * i.quantity
-    const execAmt = i.execution_amount ?? 0
-    return execAmt > 0 && execAmt > quoteAmt
-  })
+  const summary = latestSettlement
+    ? calcQuoteSummary(
+        latestItems,
+        ratesFromQuote(latestSettlement),
+        Number(latestSettlement.discount_amount ?? 0),
+        latestSettlement.min_profit_rate ?? project?.min_profit_rate ?? null,
+        true,
+      )
+    : null
 
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
 
@@ -111,18 +126,6 @@ export default function ProjectDetailPage() {
             </p>
           </div>
         )}
-        {project?.min_profit_rate != null && (
-          <div>
-            <p className="text-xs text-gray-400">목표 이윤율</p>
-            <p className={`text-sm font-medium ${
-              totalExecutionAmount > 0
-                ? profitRate >= project.min_profit_rate ? 'text-green-700' : 'text-red-700'
-                : 'text-gray-800'
-            }`}>
-              {project.min_profit_rate}%
-            </p>
-          </div>
-        )}
         {project?.note && (
           <div className="col-span-3 border-t border-gray-100 pt-3 mt-1">
             <p className="text-xs text-gray-400">메모/참고사항</p>
@@ -131,64 +134,101 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
-      {/* 이익률 현황 (계약견적서 기준) */}
-      {latestContract && (
-        <div className="grid grid-cols-4 gap-4 mb-5">
-          <div className="col-span-4 mb-2">
+      {/* 정산견적서 기준 지표 */}
+      {summary && latestSettlement ? (
+        <>
+          <div className="flex items-baseline gap-2 mb-2">
             <span className="text-xs text-gray-400">
-              계약견적서 기준 ({latestContract?.quote_number ?? '-'} · {latestContract ? new Date(latestContract.created_at).toLocaleDateString('ko-KR') : ''})
+              정산견적서 기준 ({latestSettlement.quote_number ?? '-'} · {new Date(latestSettlement.updated_at).toLocaleDateString('ko-KR')})
+            </span>
+            <span className="text-xs text-gray-300">·</span>
+            <span className="text-xs text-gray-500">
+              견적금액 <span className="font-semibold text-gray-800">{fmt(summary.finalAmount)}원</span>
             </span>
           </div>
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
-            <p className="text-xs text-gray-400 mb-1">견적금액</p>
-            <p className="text-lg font-bold text-gray-900">{fmt(Number(latestContract.final_amount ?? 0))}</p>
-            <p className="text-xs text-gray-400">원</p>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
-            <p className="text-xs text-gray-400 mb-1">실행금액</p>
-            <p className="text-lg font-bold text-red-600">{fmt(totalExecutionAmount)}</p>
-            <p className="text-xs text-gray-400">원</p>
-          </div>
-          <div className={`rounded-xl border p-4 ${totalProfit >= 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-            <p className="text-xs text-gray-400 mb-1">예상 이익</p>
-            <p className={`text-lg font-bold ${totalProfit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-              {totalProfit >= 0 ? '+' : ''}{fmt(totalProfit)}
-            </p>
-            <p className="text-xs text-gray-400">원</p>
-          </div>
-          <div className={`rounded-xl border p-4 ${profitRate >= 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-            <p className="text-xs text-gray-400 mb-1">이익률</p>
-            <div className="flex items-center gap-1">
-              {profitRate >= 0
-                ? <TrendingUp size={18} className="text-green-600" />
-                : <TrendingDown size={18} className="text-red-600" />
-              }
-              <p className={`text-lg font-bold ${profitRate >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                {fmtRate(profitRate)}%
-              </p>
+          <div className="grid grid-cols-4 gap-4 mb-5">
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <p className="text-xs text-gray-400 mb-1">현재까지 실행금액</p>
+              <p className="text-lg font-bold text-red-600">{fmt(summary.currentExec)}</p>
+              <p className="text-xs text-gray-400">원</p>
             </div>
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <p className="text-xs text-gray-400 mb-1">진행률</p>
+              <p className="text-lg font-bold text-gray-900">
+                {summary.completedGroups}/{summary.totalGroups}
+                <span className="text-xs text-gray-400 ml-1.5 font-normal">({summary.progressRate.toFixed(1)}%)</span>
+              </p>
+              <p className="text-xs text-gray-400">공종</p>
+            </div>
+            {(() => {
+              const cp = summary.currentProfit
+              const cpr = summary.currentProfitRate
+              const has = cp !== null && cpr !== null
+              const positive = has && cp! >= 0
+              return (
+                <div className={`rounded-xl border p-4 ${!has ? 'bg-white border-gray-100' : positive ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+                  <p className="text-xs text-gray-400 mb-1">현재까지 이윤 <span className="text-gray-300">(확정 공종)</span></p>
+                  {has ? (
+                    <>
+                      <p className={`text-lg font-bold ${positive ? 'text-green-700' : 'text-red-700'}`}>
+                        {positive ? '+' : ''}{fmt(cp!)}
+                      </p>
+                      <p className={`text-xs ${positive ? 'text-green-600' : 'text-red-600'}`}>{fmtRate(cpr!)}%</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-lg font-bold text-gray-300">-</p>
+                      <p className="text-xs text-gray-300">확정 공종 없음</p>
+                    </>
+                  )}
+                </div>
+              )
+            })()}
+            {(() => {
+              const pp = summary.projectedProfit
+              const ppr = summary.projectedProfitRate
+              const positive = pp >= 0
+              return (
+                <div className={`rounded-xl border p-4 ${positive ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+                  <p className="text-xs text-gray-400 mb-1">예상 이윤 <span className="text-gray-300">(목표 반영)</span></p>
+                  <div className="flex items-center gap-1">
+                    {positive
+                      ? <TrendingUp size={18} className="text-green-600" />
+                      : <TrendingDown size={18} className="text-red-600" />
+                    }
+                    <p className={`text-lg font-bold ${positive ? 'text-green-700' : 'text-red-700'}`}>
+                      {positive ? '+' : ''}{fmt(pp)}
+                    </p>
+                  </div>
+                  <p className={`text-xs ${positive ? 'text-green-600' : 'text-red-600'}`}>{fmtRate(ppr)}%</p>
+                </div>
+              )
+            })()}
           </div>
+        </>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 p-6 mb-5 text-center">
+          <p className="text-sm text-gray-400">정산견적서가 생성되면 내용이 표시됩니다.</p>
         </div>
       )}
 
-      {/* 마이너스 항목 경고 */}
-      {minusItems.length > 0 && (
+      {/* 마이너스 항목 경고 (정산견적서 actual 기준) */}
+      {summary && summary.minusCount > 0 && (
         <div className="bg-red-50 rounded-xl border border-red-100 p-4 mb-5">
           <div className="flex items-center gap-2 mb-3">
             <AlertTriangle size={16} className="text-red-500" />
-            <span className="text-sm font-bold text-red-700">마이너스 항목 {minusItems.length}개</span>
+            <span className="text-sm font-bold text-red-700">마이너스 항목 {summary.minusCount}개</span>
           </div>
           <div className="space-y-2">
-            {minusItems.map(item => {
-              const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
-              const diff = quoteAmt - (item.execution_amount ?? 0)
+            {summary.negativeItems.map((it, idx) => {
+              const [wt, name] = it.name.split(' - ')
               return (
-                <div key={item.id} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
+                <div key={idx} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">{item.work_type}</span>
-                    <span className="text-xs text-gray-700">{item.item_name}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">{wt}</span>
+                    <span className="text-xs text-gray-700">{name}</span>
                   </div>
-                  <span className="text-xs font-bold text-red-600">{fmt(diff)}원</span>
+                  <span className="text-xs font-bold text-red-600">{fmt(it.profit)}원</span>
                 </div>
               )
             })}
@@ -219,8 +259,15 @@ export default function ProjectDetailPage() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {quotes.map(q => {
-                const eAmt = Number(q.total_execution_amount ?? 0)
-                const rate = Number(q.total_profit_rate ?? 0)
+                const items = quoteItems[q.id] ?? []
+                const isSet = q.type === '정산'
+                const s = calcQuoteSummary(
+                  items,
+                  ratesFromQuote(q),
+                  Number(q.discount_amount ?? 0),
+                  q.min_profit_rate ?? project?.min_profit_rate ?? null,
+                  isSet,
+                )
                 return (
                   <tr key={q.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
@@ -233,14 +280,16 @@ export default function ProjectDetailPage() {
                         {q.status ?? '-'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-xs text-gray-700">{Number(q.final_amount) > 0 ? fmt(Number(q.final_amount)) : '-'}</td>
-                    <td className="px-4 py-3 text-right text-xs text-red-600">{eAmt > 0 ? fmt(eAmt) : '-'}</td>
+                    <td className="px-4 py-3 text-right text-xs text-gray-700">{s.finalAmount > 0 ? fmt(s.finalAmount) : '-'}</td>
+                    <td className="px-4 py-3 text-right text-xs text-red-600">
+                      {isSet && s.completedGroups > 0 ? fmt(s.currentExec) : '—'}
+                    </td>
                     <td className="px-4 py-3 text-right">
-                      {eAmt > 0 ? (
-                        <span className={`text-xs font-bold ${rate >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {fmtRate(rate)}%
+                      {isSet && s.currentProfitRate !== null ? (
+                        <span className={`text-xs font-bold ${s.currentProfitRate >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {fmtRate(s.currentProfitRate)}%
                         </span>
-                      ) : '-'}
+                      ) : '—'}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">
                       {new Date(q.created_at).toLocaleDateString('ko-KR')}

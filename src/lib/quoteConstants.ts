@@ -28,3 +28,8 @@ export const READONLY_STATUSES: QuoteStatus[] = ['배포', '계약']
 
 export const isReadonly = (status: string) =>
   READONLY_STATUSES.includes(status as QuoteStatus)
+
+export const SIZE_CATEGORIES = [
+  '20평대','30평대','40평대','50평대','60평대','70평대','80평대','90평대','100평대이상',
+] as const
+export type SizeCategory = typeof SIZE_CATEGORIES[number]

@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ArrowDown, ArrowUp, Pencil, Plus, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { getPersonNames } from '@/lib/utils'
 import { format } from 'date-fns'
 import type { Project } from '@/types'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
@@ -194,7 +195,7 @@ export default function ProjectsPage() {
               </tr>
             )}
             {sorted.map((p) => (
-              <tr key={p.id} className="hover:bg-gray-50">
+              <tr key={p.id} className="hover:bg-gray-50 align-top">
                 <td className="px-3 py-2.5 overflow-hidden">
                   <button
                     onClick={() => router.push(`/projects/${p.id}`)}
@@ -210,15 +211,24 @@ export default function ProjectsPage() {
                 <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
                   <div className="truncate" title={p.address}>{p.address || '-'}</div>
                 </td>
-                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{p.manager_name || '-'}</div>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{p.designer_name || '-'}</div>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-gray-600 overflow-hidden">
-                  <div className="truncate">{p.site_manager_name || '-'}</div>
-                </td>
+                {(() => {
+                  const pmNames  = getPersonNames((p as any).pms,          p.manager_name)
+                  const desNames = getPersonNames((p as any).designers,     p.designer_name)
+                  const smNames  = getPersonNames((p as any).site_managers, p.site_manager_name)
+                  return (
+                    <>
+                      <td className="px-3 py-2.5 text-xs text-gray-600">
+                        {pmNames.length === 0 ? '-' : pmNames.map((n, i) => <div key={i}>{n}</div>)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-gray-600">
+                        {desNames.length === 0 ? '-' : desNames.map((n, i) => <div key={i}>{n}</div>)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-gray-600">
+                        {smNames.length === 0 ? '-' : smNames.map((n, i) => <div key={i}>{n}</div>)}
+                      </td>
+                    </>
+                  )
+                })()}
                 <td className="px-3 py-2.5">
                   <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${PROJECT_STATUS_COLOR[p.status] ?? 'bg-gray-100 text-gray-600'}`}>
                     {PROJECT_STATUS_LABEL[p.status] ?? p.status}

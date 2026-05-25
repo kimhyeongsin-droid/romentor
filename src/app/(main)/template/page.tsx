@@ -6,6 +6,8 @@ import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { Plus, Trash2, Lock, Unlock, RefreshCw, ChevronDown, GripVertical } from 'lucide-react'
 import { verifyAdminPassword } from '@/lib/passwordVerify'
 import { fetchCompanyRates, saveCompanyRates } from '@/lib/companySettings'
+import { calcFinalAmount } from '@/lib/quote-calc'
+import { SIZE_CATEGORIES } from '@/lib/quoteConstants'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -17,8 +19,6 @@ interface TemplateItem {
   comment: string; note: string; sort_order: number
   space_type: string; size_category: string
 }
-
-const SIZE_CATEGORIES = ['20평대','30평대','40평대','50평대','60평대','70평대','80평대','90평대','100평대이상']
 
 const fmt = (n: number) => n.toLocaleString()
 
@@ -242,18 +242,22 @@ export default function TemplatePage() {
 
   // 직접공사비
   const directMaterial = summaryRows.reduce((s, r) => s + r.materialTotal, 0)
-  const directLabor   = summaryRows.reduce((s, r) => s + r.laborTotal, 0)
-  const directTotal   = directMaterial + directLabor
+  const directLabor    = summaryRows.reduce((s, r) => s + r.laborTotal, 0)
 
-  // 간접공사비
-  const indirectAccident   = Math.round(directLabor * rates.accident / 100)
-  const indirectEmployment = Math.round(directLabor * rates.employment / 100)
-  const indirectOverhead   = Math.round(directTotal * rates.overhead / 100)
-  const indirectProfit     = Math.round(directTotal * rates.profit / 100)
-  const indirectTotal      = indirectAccident + indirectEmployment + indirectOverhead + indirectProfit
-
-  const vat        = Math.round(directTotal * rates.vat / 100)
-  const finalTotal = directTotal + indirectTotal + vat + discount
+  const {
+    directTotal,
+    indirectAccident,
+    indirectEmployment,
+    indirectOverhead,
+    indirectProfit,
+    indirectTotal,
+    vat,
+    finalAmount: finalTotal,
+  } = calcFinalAmount({
+    items: [{ material_unit_price: 0, labor_unit_price: 0, quantity: 0, material_amount: directMaterial, labor_amount: directLabor }],
+    rates,
+    discount: discount || 0,
+  })
 
   function scrollToSection(wt: WorkType) {
     document.getElementById(`section-${wt}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -370,58 +374,103 @@ export default function TemplatePage() {
   }, [pyeong, sizeCategory, items])
 
   async function loadFromUnitPrices() {
-    if (!confirm('단가 마스터의 단가를 현재 포맷에 반영할까요?\n(기존 항목명·Comment·수량·순서는 유지되고, 단가만 업데이트됩니다. 단가 마스터에만 있는 새 항목은 추가됩니다.)')) return
+    if (!confirm(`단가 마스터의 단가를 모든 평형(${SIZE_CATEGORIES.length}개) 포맷에 반영할까요?\n(기존 항목명·Comment·수량·순서는 유지되고, 단가만 업데이트됩니다. 단가 마스터에만 있는 새 항목은 모든 평형에 추가됩니다.)`)) return
+    setSyncMsg('단가 마스터 반영 중...')
     const sb = createClient()
-    const { data: existing } = await sb.from('quote_templates').select('*')
-    const { data: units } = await sb.from('unit_prices').select('*')
-    if (!units) return
+    const [{ data: existing }, { data: units }] = await Promise.all([
+      sb.from('quote_templates').select('*'),
+      sb.from('unit_prices').select('*'),
+    ])
+    if (!units) { setSyncMsg(''); return }
     const currentItems = existing ?? []
 
+    const updates: any[] = []
+    const inserts: any[] = []
+    let updatedCount = 0
+    let insertedCount = 0
+
     for (const u of units) {
-      const match = currentItems.find(
-        (t: any) => t.work_type === u.work_type && t.item_name === u.item_name
-      )
-      if (match) {
-        await sb.from('quote_templates').update({
-          unit: u.unit,
-          material_unit_price: u.material_unit_price ?? 0,
-          labor_unit_price: u.labor_unit_price ?? 0,
-        }).eq('id', match.id)
-      } else {
-        const wtItems = currentItems.filter((t: any) => t.work_type === u.work_type)
-        const maxOrder = wtItems.length > 0 ? Math.max(...wtItems.map((t: any) => t.sort_order)) : -1
-        await sb.from('quote_templates').insert({
-          work_type: u.work_type, item_name: u.item_name, unit: u.unit,
-          quantity: 1, material_unit_price: u.material_unit_price ?? 0,
-          labor_unit_price: u.labor_unit_price ?? 0, comment: '', note: '', sort_order: maxOrder + 1,
-        })
+      for (const size of SIZE_CATEGORIES) {
+        const match = currentItems.find(
+          (t: any) =>
+            t.size_category === size &&
+            t.work_type === u.work_type &&
+            t.item_name === u.item_name
+        )
+        if (match) {
+          updates.push(sb.from('quote_templates').update({
+            unit: u.unit,
+            material_unit_price: u.material_unit_price ?? 0,
+            labor_unit_price: u.labor_unit_price ?? 0,
+          }).eq('id', match.id))
+          updatedCount++
+        } else {
+          const sizeWtItems = currentItems.filter(
+            (t: any) => t.size_category === size && t.work_type === u.work_type
+          )
+          const maxOrder = sizeWtItems.length > 0
+            ? Math.max(...sizeWtItems.map((t: any) => t.sort_order ?? -1))
+            : -1
+          inserts.push({
+            work_type: u.work_type,
+            item_name: u.item_name,
+            unit: u.unit,
+            quantity: 1,
+            material_unit_price: u.material_unit_price ?? 0,
+            labor_unit_price: u.labor_unit_price ?? 0,
+            comment: '',
+            note: '',
+            sort_order: maxOrder + 1,
+            space_type: '주거',
+            size_category: size,
+          })
+          insertedCount++
+        }
       }
     }
 
+    await Promise.all(updates)
+    if (inserts.length > 0) {
+      await sb.from('quote_templates').insert(inserts)
+    }
+
     await load()
-    alert('✅ 단가 마스터의 단가가 반영됐습니다!\n기존 Comment와 항목 순서는 유지됩니다.')
+    setSyncMsg(`✅ ${SIZE_CATEGORIES.length}개 평형에 반영 완료 · 업데이트 ${updatedCount} / 신규 ${insertedCount}`)
+    setTimeout(() => setSyncMsg(''), 4000)
   }
 
   async function syncToUnitPrices() {
-    if (!confirm('현재 포맷의 단가를 단가 마스터에 반영할까요?\n(항목명, 단위, 재료단가, 노무단가가 업데이트됩니다)')) return
+    if (!confirm('현재 포맷의 단가를 단가 마스터에 반영할까요?\n(항목명, 단위, 재료단가, 노무단가가 업데이트됩니다. 마스터에 없는 항목은 신규 추가됩니다.)')) return
     setSyncMsg('동기화 중...')
     const sb = createClient()
     const { data: units } = await sb.from('unit_prices').select('id, work_type, item_name')
     if (!units) { setSyncMsg(''); return }
     let updated = 0
+    let inserted = 0
     for (const item of items) {
       const match = units.find(u => u.work_type === item.work_type && u.item_name === item.item_name)
+      const sum = item.material_unit_price + item.labor_unit_price
       if (match) {
         await sb.from('unit_prices').update({
           unit: item.unit,
           material_unit_price: item.material_unit_price,
           labor_unit_price: item.labor_unit_price,
-          unit_price: item.material_unit_price + item.labor_unit_price,
+          unit_price: sum,
         }).eq('id', match.id)
         updated++
+      } else {
+        await sb.from('unit_prices').insert({
+          work_type: item.work_type,
+          item_name: item.item_name,
+          unit: item.unit,
+          material_unit_price: item.material_unit_price,
+          labor_unit_price: item.labor_unit_price,
+          unit_price: sum,
+        })
+        inserted++
       }
     }
-    setSyncMsg(`✅ ${updated}개 항목이 단가 마스터에 반영되었습니다`)
+    setSyncMsg(`✅ 단가 마스터 반영 완료 · 업데이트 ${updated} / 신규 ${inserted}`)
     setTimeout(() => setSyncMsg(''), 4000)
   }
 
@@ -514,7 +563,7 @@ export default function TemplatePage() {
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5 text-sm text-blue-700">
         💡 <strong>사용법:</strong> 항목명·단위·수량·재료단가·노무단가·비고를 클릭해 수정 → 자동 저장.
-        수량 <strong>0</strong> = 견적 작성 시 제외. 수정 완료 후 <strong>단가 마스터에 반영</strong> 버튼으로 마스터에 저장하고, <strong>단가 업데이트</strong> 버튼으로 마스터 최신값을 가져오세요.
+        수량 <strong>0</strong> = 견적 작성 시 제외. 수정 완료 후 <strong>단가 마스터에 반영</strong> 버튼으로 마스터에 저장하고, <strong>단가 초기화</strong> 버튼으로 마스터 최신값을 모든 평형에 일괄 반영하세요.
       </div>
 
       {/* 평형대 탭 */}
@@ -708,12 +757,12 @@ export default function TemplatePage() {
                   <tr className="hover:bg-gray-50">
                     <td className="px-4 py-2 text-xs text-gray-400 text-center"></td>
                     <td className="px-4 py-2 text-xs text-gray-700">
-                      부가세 (직접공사비 ×{' '}
+                      부가세{' '}
                       <input type="number" value={rates.vat}
                         onChange={e => handleRateChange({ ...rates, vat: Number(e.target.value) })}
                         className="w-14 text-xs text-center border-b border-gray-300 focus:outline-none focus:border-blue-400 bg-transparent"
                         step="0.1" />
-                      %)
+                      %
                     </td>
                     <td className="px-4 py-2 text-xs text-gray-400 text-center">식</td>
                     <td className="px-4 py-2 text-xs text-gray-400 text-center">1</td>
