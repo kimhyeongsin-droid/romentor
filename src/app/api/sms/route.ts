@@ -94,7 +94,7 @@ export async function POST(req: Request) {
     const itemLines = (payloadItems as { name: string; profit: number }[])
       .map(i => `${i.name}: ${Number(i.profit).toLocaleString()}원`)
       .join('\n')
-    message = `[로멘토] ⚠️ 마이너스 공정 발생\n견적: ${quote.note ?? ''}\n${itemLines}\n확인 후 조치 바랍니다.`
+    message = `[로멘토] ⚠️ 마이너스 공정 발생\n현장: ${project.name}\n${itemLines}\n확인 후 조치 바랍니다.`
   }
 
   if (!phones.length) return NextResponse.json({ ok: false, error: '수신 번호가 없습니다.' })
