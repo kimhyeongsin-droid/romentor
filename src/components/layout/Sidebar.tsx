@@ -22,7 +22,7 @@ export default function Sidebar() {
 
   return (
     <aside className={cn(
-      'min-h-screen bg-slate-900 text-white flex flex-col flex-shrink-0 overflow-hidden transition-[width] duration-200 ease-out',
+      'h-full bg-slate-900 text-white flex flex-col flex-shrink-0 overflow-x-hidden overflow-y-auto transition-[width] duration-200 ease-out',
       collapsed ? 'w-14' : 'w-60'
     )}>
       {/* Header */}
