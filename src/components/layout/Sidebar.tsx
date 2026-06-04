@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed'
+import UserMenu from '@/app/(main)/_components/UserMenu'
 
 const nav = [
   { href: '/dashboard', label: '대시보드', icon: LayoutDashboard },
@@ -65,6 +66,9 @@ export default function Sidebar() {
           </Link>
         ))}
       </nav>
+
+      {/* User */}
+      {!collapsed && <UserMenu />}
 
       {/* Footer */}
       {!collapsed && (
