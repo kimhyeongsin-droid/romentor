@@ -38,7 +38,12 @@ async function sendOneSms(phone: string, message: string, apiKey: string, apiSec
 }
 
 export async function POST(req: Request) {
-  const { quoteId, type, itemId, items: payloadItems } = await req.json()
+  const {
+    quoteId, type, itemId, items: payloadItems,
+    totalProfit: payloadTotalProfit,
+    totalProfitRate: payloadTotalProfitRate,
+    minProfitRate: payloadMinProfitRate,
+  } = await req.json()
   const sb = await createClient()
 
   const { data: quote } = await sb
@@ -68,7 +73,9 @@ export async function POST(req: Request) {
     const designerPhones = getPhones(project.designers, project.designer_phone)
     const sitePhones = getPhones(project.site_managers, project.site_manager_phone)
     phones = [...new Set([...pmPhones, ...designerPhones, ...sitePhones])]
-    message = `[로멘토 견적알람]\n⚠️ 마이너스 발생!\n프로젝트: ${project.name}\n총 이윤: ${Number(quote.total_profit).toLocaleString()}원 (${quote.total_profit_rate}%)\n즉시 확인 바랍니다.`
+    const tp = payloadTotalProfit ?? Number(quote.total_profit)
+    const tpr = payloadTotalProfitRate ?? Number(quote.total_profit_rate)
+    message = `[로멘토 견적알람]\n⚠️ 마이너스 발생!\n프로젝트: ${project.name}\n총 이윤: ${Number(tp).toLocaleString()}원 (${Number(tpr).toFixed(1)}%)\n즉시 확인 바랍니다.`
   } else if (type === 'item') {
     // PM + 디자이너 + 현장소장 전원에게 발송
     const { data: item } = await sb.from('quote_items').select('*').eq('id', itemId).single()
@@ -83,18 +90,27 @@ export async function POST(req: Request) {
     const designerPhones = getPhones(project.designers, project.designer_phone)
     const sitePhones = getPhones(project.site_managers, project.site_manager_phone)
     phones = [...new Set([...pmPhones, ...designerPhones, ...sitePhones])]
-    const minRate = project.min_profit_rate ?? 0
-    const currentRate = Number(quote.total_profit_rate ?? 0).toFixed(1)
+    const minRate = payloadMinProfitRate ?? quote.min_profit_rate ?? project.min_profit_rate ?? 0
+    const currentRate = Number(payloadTotalProfitRate ?? quote.total_profit_rate ?? 0).toFixed(1)
     message = `[로멘토 견적알람]\n⚠️ 목표이윤 미달!\n프로젝트: ${project.name}\n목표: ${minRate}% / 현재: ${currentRate}%\n즉시 확인 바랍니다.`
   } else if (type === 'item_minus') {
     const pmPhones = getPhones(project.pms, project.manager_phone)
     const designerPhones = getPhones(project.designers, project.designer_phone)
     const sitePhones = getPhones(project.site_managers, project.site_manager_phone)
     phones = [...new Set([...pmPhones, ...designerPhones, ...sitePhones])]
-    const itemLines = (payloadItems as { name: string; profit: number }[])
-      .map(i => `${i.name}: ${Number(i.profit).toLocaleString()}원`)
+    const itemLines = (payloadItems as { name: string; profit: number; rate: number; tier: string; target: number; causes?: string[]; n?: number; m?: number }[])
+      .map(i => {
+        const causeStr = i.causes && i.causes.length ? `\n  주요 원인: ${i.causes.join(', ')}` : ''
+        const progStr = typeof i.n === 'number' && typeof i.m === 'number'
+          ? ` · 실입력 ${i.n}/${i.m}${i.n < i.m ? ' (진행 중)' : ''}`
+          : ''
+        if (i.tier === 'deficit') {
+          return `⚠️ 마이너스 공정 발생 — ${i.name}: 이윤 ${Number(i.profit).toLocaleString()}원 (이윤율 ${i.rate.toFixed(1)}%)${progStr}${causeStr}`
+        }
+        return `⚠️ 목표 이윤율 미달 — ${i.name}: 이윤율 ${i.rate.toFixed(1)}% (목표 ${i.target}%)${progStr}${causeStr}`
+      })
       .join('\n')
-    message = `[로멘토] ⚠️ 마이너스 공정 발생\n현장: ${project.name}\n${itemLines}\n확인 후 조치 바랍니다.`
+    message = `[로멘토]\n현장: ${project.name}\n${itemLines}\n확인 후 조치 바랍니다.`
   }
 
   if (!phones.length) return NextResponse.json({ ok: false, error: '수신 번호가 없습니다.' })

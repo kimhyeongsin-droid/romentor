@@ -5,10 +5,11 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcEffectiveExec, calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
+import { calcEffectiveExec, calcFinalAmount, isGroupComplete, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
+import StickyToolbar from '@/components/common/StickyToolbar'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
@@ -498,48 +499,110 @@ export default function QuoteDetailPage() {
             .upsert(memoEntries, { onConflict: 'quote_id,work_type' })
         }
 
-        const totalQuote = items.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
-        const totalExec = items.reduce((s, i) => {
-          const hasActual = i.actual_execution_amount !== null && i.actual_execution_amount !== undefined
-          return s + (hasActual ? i.actual_execution_amount! : (i.planned_execution_amount ?? 0))
-        }, 0)
-        if (totalExec > 0 && totalQuote > 0) {
-          const currentRate = ((totalQuote - totalExec) / totalQuote) * 100
-          const smsAlerts: Promise<Response>[] = []
-          if (minProfitRate !== null && currentRate < minProfitRate) {
-            smsAlerts.push(fetch('/api/sms', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ quoteId: id, type: 'profit_warning' }),
-            }))
-          }
-          if (currentRate < 0) {
-            smsAlerts.push(fetch('/api/sms', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ quoteId: id, type: 'total' }),
-            }))
-          }
-          await Promise.all(smsAlerts)
+        let totalAmount = 0, totalExpected = 0, totalEffective = 0
+        const workTypeMap: Record<string, { amount: number; expected: number; effective: number; n: number; m: number; items: { name: string; miss: number }[] }> = {}
+        for (const item of items) {
+          const wt = item.work_type
+          if (!workTypeMap[wt]) workTypeMap[wt] = { amount: 0, expected: 0, effective: 0, n: 0, m: 0, items: [] }
+          const e = workTypeMap[wt]
+          e.m += 1
+          const hasActual = item.actual_execution_amount !== null && item.actual_execution_amount !== undefined
+          if (hasActual) e.n += 1
+          const qa = (item.material_unit_price + item.labor_unit_price) * item.quantity
+          if (qa <= 0) continue
+          const planned = (item.planned_execution_amount ?? 0) > 0
+            ? item.planned_execution_amount!
+            : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : 0)
+          const effective = hasActual ? item.actual_execution_amount! : planned
+          e.amount += qa
+          e.expected += planned
+          e.effective += effective
+          e.items.push({ name: item.item_name, miss: effective - planned })
+          totalAmount += qa
+          totalExpected += planned
+          totalEffective += effective
+        }
 
-          const workTypeMap: Record<string, { quote: number; actual: number }> = {}
-          for (const item of items) {
-            const hasActual = item.actual_execution_amount !== null && item.actual_execution_amount !== undefined
-            if (!hasActual) continue
-            const actual = item.actual_execution_amount!
-            if (!workTypeMap[item.work_type]) workTypeMap[item.work_type] = { quote: 0, actual: 0 }
-            workTypeMap[item.work_type].quote += (item.material_unit_price + item.labor_unit_price) * item.quantity
-            workTypeMap[item.work_type].actual += actual
+        if (totalAmount > 0) {
+          const totalProfit = totalAmount - totalEffective
+          const totalRate = (totalProfit / totalAmount) * 100
+          const targetRate = minProfitRate ?? 15
+
+          const prevState: Record<string, AlertState> = (quote?.sms_alert_state as Record<string, AlertState> | null) ?? {}
+          const nextState: Record<string, AlertState> = {}
+
+          nextState['__TOTAL__'] = { tier: tierOf(totalEffective, totalExpected, totalAmount), profit: totalProfit, rate: totalRate }
+          const wtDetails: Record<string, { profit: number; rate: number; tier: AlertTier; causes: string[]; n: number; m: number }> = {}
+          for (const [wt, v] of Object.entries(workTypeMap)) {
+            if (v.amount <= 0) continue
+            const wtProfit = v.amount - v.effective
+            const wtRate = (wtProfit / v.amount) * 100
+            const tier = tierOf(v.effective, v.expected, v.amount)
+            nextState[wt] = { tier, profit: wtProfit, rate: wtRate }
+            const causes = v.items
+              .filter(it => it.miss > 0)
+              .sort((a, b) => b.miss - a.miss)
+              .slice(0, 2)
+              .map(it => it.name)
+            wtDetails[wt] = { profit: wtProfit, rate: wtRate, tier, causes, n: v.n, m: v.m }
           }
-          const minusWorkTypes = Object.entries(workTypeMap)
-            .filter(([, v]) => v.quote - v.actual < 0)
-            .map(([name, v]) => ({ name, profit: v.quote - v.actual }))
-          if (minusWorkTypes.length > 0) {
+
+          const totalShouldSend = decideAlert(nextState['__TOTAL__'], prevState['__TOTAL__'])
+          const escalatedWts = Object.keys(nextState)
+            .filter(key => key !== '__TOTAL__' && decideAlert(nextState[key], prevState[key]))
+
+          console.log('[sms dedup] prevState=', JSON.stringify(prevState))
+          console.log('[sms dedup] nextState=', JSON.stringify(nextState))
+          console.log('[sms dedup] totalShouldSend=', totalShouldSend, 'escalatedWts=', escalatedWts)
+
+          if (totalShouldSend) {
+            const totalType = nextState['__TOTAL__'].tier === 'deficit' ? 'total' : 'profit_warning'
             await fetch('/api/sms', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ quoteId: id, type: 'item_minus', items: minusWorkTypes }),
+              body: JSON.stringify({
+                quoteId: id,
+                type: totalType,
+                totalProfit,
+                totalProfitRate: totalRate,
+                minProfitRate,
+              }),
             })
+          }
+
+          if (escalatedWts.length > 0) {
+            await fetch('/api/sms', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                quoteId: id,
+                type: 'item_minus',
+                items: escalatedWts.map(wt => ({
+                  name: wt,
+                  profit: wtDetails[wt].profit,
+                  rate: wtDetails[wt].rate,
+                  tier: wtDetails[wt].tier,
+                  target: targetRate,
+                  causes: wtDetails[wt].causes,
+                  n: wtDetails[wt].n,
+                  m: wtDetails[wt].m,
+                })),
+              }),
+            })
+          }
+
+          const { data: stateRows, error: stateErr } = await sb
+            .from('quotes')
+            .update({ sms_alert_state: nextState })
+            .eq('id', id)
+            .select('id, sms_alert_state')
+          if (stateErr) {
+            console.error('[sms_alert_state] UPDATE 실패:', stateErr.code, stateErr.message, stateErr.details, stateErr.hint)
+          } else if (!stateRows || stateRows.length === 0) {
+            console.error('[sms_alert_state] UPDATE 0행 — RLS/권한 또는 id 불일치로 조용히 차단됨', { id })
+          } else {
+            console.log('[sms_alert_state] DB 저장 확인:', JSON.stringify(stateRows[0].sms_alert_state))
+            setQuote((prev: any) => prev ? { ...prev, sms_alert_state: nextState } : prev)
           }
         }
       } else {
@@ -658,7 +721,8 @@ export default function QuoteDetailPage() {
   return (
     <div className="p-8">
       {/* 헤더 */}
-      <div className="flex items-center justify-between mb-4">
+      <StickyToolbar className="-mx-8 px-8 py-3 mb-4">
+        <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => router.back()} className="text-gray-400 hover:text-gray-600">
             <ArrowLeft size={20} />
@@ -716,7 +780,8 @@ export default function QuoteDetailPage() {
             </button>
           )}
         </div>
-      </div>
+        </div>
+      </StickyToolbar>
 
       {/* 읽기전용 배너 */}
       {checkReadonly(quote?.status ?? '') && (
@@ -921,7 +986,12 @@ export default function QuoteDetailPage() {
                       ))}
                       {(() => {
                         const groupQuote = gItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
-                        const groupPlanned = gItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
+                        const groupPlanned = gItems.reduce((s, i) => {
+                          const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
+                          return s + ((i.planned_execution_amount ?? 0) > 0
+                            ? i.planned_execution_amount!
+                            : (minProfitRate != null && qa > 0 ? Math.floor(qa * (1 - minProfitRate / 100)) : 0))
+                        }, 0)
                         const groupActual = gItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
                         const groupEffective = gItems.reduce((s, i) => {
                           const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
@@ -956,7 +1026,7 @@ export default function QuoteDetailPage() {
                             {isSettlement && (
                               <>
                                 {showCol('planned_execution') && (
-                                  <td className="internal-only px-3 py-2 text-xs text-right text-violet-600 font-bold">
+                                  <td className="internal-only px-3 py-2 text-xs text-right text-gray-400 italic">
                                     {groupPlanned > 0 ? fmt(groupPlanned) : '-'}
                                   </td>
                                 )}

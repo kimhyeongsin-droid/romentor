@@ -71,6 +71,40 @@ export function calcEffectiveExec(
   return { value: 0, isProjected: false }
 }
 
+export type AlertTier = 'normal' | 'below_target' | 'deficit'
+
+export interface AlertState {
+  tier: AlertTier
+  profit: number
+  rate: number
+}
+
+// 동일 tier 재발송 히스테리시스 임계값 (미세 악화로 인한 폭주 방지)
+export const ALERT_DEFICIT_MIN_DROP = 100000 // 적자: 이윤이 이만큼(원) 더 하락했을 때만 재발송
+export const ALERT_BELOW_TARGET_MIN_DROP = 1.0 // 목표미달: 이윤율이 이만큼(%p) 더 하락했을 때만 재발송
+
+const TIER_RANK: Record<AlertTier, number> = { normal: 0, below_target: 1, deficit: 2 }
+
+// 공종 실행가 경계선으로 판정. 실제(effectiveExec)가 expected를 초과하면 악화.
+//   effectiveExec ≤ expected            → normal
+//   expected < effectiveExec ≤ amount   → below_target
+//   effectiveExec > amount              → deficit
+export function tierOf(effectiveExec: number, expected: number, amount: number): AlertTier {
+  if (effectiveExec > amount) return 'deficit'
+  if (effectiveExec > expected) return 'below_target'
+  return 'normal'
+}
+
+export function decideAlert(cur: AlertState, prev: AlertState | undefined): boolean {
+  if (cur.tier === 'normal') return false
+  if (!prev || TIER_RANK[cur.tier] > TIER_RANK[prev.tier]) return true
+  if (TIER_RANK[cur.tier] === TIER_RANK[prev.tier]) {
+    if (cur.tier === 'deficit') return prev.profit - cur.profit >= ALERT_DEFICIT_MIN_DROP
+    if (cur.tier === 'below_target') return prev.rate - cur.rate >= ALERT_BELOW_TARGET_MIN_DROP
+  }
+  return false
+}
+
 export interface QuoteSummaryItem {
   work_type: string
   item_name?: string
