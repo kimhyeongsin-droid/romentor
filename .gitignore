@@ -42,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 일회용 운영 스크립트 (임시비번·팀 PII 포함 — 추적 금지)
+/scripts/create-team.mjs
+/scripts/backfill-profiles.mjs

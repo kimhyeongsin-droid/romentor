@@ -10,6 +10,9 @@ import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
 import StickyToolbar from '@/components/common/StickyToolbar'
+import QuoteHistory from '@/app/(main)/_components/QuoteHistory'
+import { usePermissions } from '@/hooks/usePermissions'
+import { canEditQuote } from '@/lib/permissions'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
@@ -329,7 +332,9 @@ export default function QuoteDetailPage() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
   const isSettlement = quote?.type === '정산'
-  const isEditable = quote ? !checkReadonly(quote.status) : false
+  const { isAdmin, isAssignee } = usePermissions(quote?.project_id)
+  const canEdit = quote ? canEditQuote({ isAdmin, isAssignee, status: quote.status }) : false
+  const isEditable = quote ? (!checkReadonly(quote.status) && canEdit) : false
   const { widths: itemResizableWidths, startResize: startItemResize } = useResizableColumns(
     'romentor.quoteItemTable.settlement.colWidths', ITEM_DEFAULT_WIDTHS
   )
@@ -790,6 +795,15 @@ export default function QuoteDetailPage() {
         </div>
       )}
 
+      {/* 권한 열람전용 배너 (상태 잠금과 별개) */}
+      {quote && !canEdit && !checkReadonly(quote.status) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 mb-4 text-sm text-amber-800">
+          🔒 열람 전용 — {quote.status === '정산'
+            ? '정산 견적은 관리자만 수정할 수 있습니다.'
+            : '이 프로젝트의 담당자가 아니어서 수정할 수 없습니다.'}
+        </div>
+      )}
+
       {/* 견적 합계표 */}
       <QuoteSummaryTable
         items={items}
@@ -1088,6 +1102,8 @@ export default function QuoteDetailPage() {
           </button>
         </div>
       )}
+
+      <QuoteHistory quoteId={id} />
     </div>
   )
 }
