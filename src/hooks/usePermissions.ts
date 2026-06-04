@@ -16,7 +16,8 @@ export function usePermissions(projectId?: string | null) {
       const { data: { user } } = await sb.auth.getUser()
       if (!user) { if (active) setLoading(false); return }
 
-      const { data: prof } = await sb.from('profiles').select('role').eq('id', user.id).single()
+      const { data: prof, error: profErr } = await sb.from('profiles').select('role').eq('id', user.id).single()
+      if (profErr) console.warn('[usePermissions] profiles 읽기 실패 — isAdmin 판정 불가:', profErr.code, profErr.message)
 
       let assignee = false
       if (projectId) {
