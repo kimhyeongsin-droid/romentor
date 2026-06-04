@@ -2,9 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, ChevronLeft, ChevronRight, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed'
+import { usePermissions } from '@/hooks/usePermissions'
 import UserMenu from '@/app/(main)/_components/UserMenu'
 
 const nav = [
@@ -20,6 +21,8 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname()
   const { collapsed, toggle } = useSidebarCollapsed()
+  const { isAdmin } = usePermissions()
+  const navItems = isAdmin ? [...nav, { href: '/admin', label: '팀 관리', icon: Users }] : nav
 
   return (
     <aside className={cn(
@@ -48,7 +51,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-1">
-        {nav.map(({ href, label, icon: Icon }) => (
+        {navItems.map(({ href, label, icon: Icon }) => (
           <Link
             key={href}
             href={href}
