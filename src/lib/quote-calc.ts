@@ -127,8 +127,43 @@ export interface QuoteSummary {
   currentProfitRate: number | null
   projectedProfit: number
   projectedProfitRate: number
-  minusCount: number
-  negativeItems: Array<{ name: string; profit: number }>
+  warnings: WorkTypeWarning[]
+}
+
+export interface WorkTypeWarning {
+  workType: string
+  tier: 'below_target' | 'deficit'
+  amount: number
+  effective: number
+  profit: number
+  rate: number
+}
+
+// 공종별 합계로 tier 판정. effective는 실제 입력된 actual만 합산(미입력 라인=0, 부분 입력 실시간 반영).
+// expected는 목표 이윤율 기반(라인 견적금액 × (1 - rate)) 합. normal 공종은 제외하고 반환.
+export function calcWorkTypeWarnings(
+  items: QuoteSummaryItem[],
+  minProfitRate: number | null | undefined
+): WorkTypeWarning[] {
+  const map: Record<string, { amount: number; expected: number; effective: number }> = {}
+  for (const i of items) {
+    const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
+    if (qa <= 0) continue
+    const wt = i.work_type || '기타'
+    if (!map[wt]) map[wt] = { amount: 0, expected: 0, effective: 0 }
+    const e = map[wt]
+    e.amount += qa
+    e.expected += minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa
+    e.effective += i.actual_execution_amount ?? 0
+  }
+  const out: WorkTypeWarning[] = []
+  for (const [workType, v] of Object.entries(map)) {
+    const tier = tierOf(v.effective, v.expected, v.amount)
+    if (tier === 'normal') continue
+    const profit = v.amount - v.effective
+    out.push({ workType, tier, amount: v.amount, effective: v.effective, profit, rate: (profit / v.amount) * 100 })
+  }
+  return out
 }
 
 export function calcQuoteSummary(
@@ -161,26 +196,11 @@ export function calcQuoteSummary(
   const currentProfitRate: number | null = currentProfit !== null && currentQuoteSum > 0
     ? (currentProfit / currentQuoteSum) * 100 : null
 
-  const effectiveTotal = items.reduce((s, i) => {
-    const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-    return s + calcEffectiveExec(i.actual_execution_amount ?? null, qa, minProfitRate, isSettlement).value
-  }, 0)
+  const effectiveTotal = items.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
   const projectedProfit = directTotal - effectiveTotal
   const projectedProfitRate = directTotal > 0 ? (projectedProfit / directTotal) * 100 : 0
 
-  const negativeItems = items
-    .filter(i =>
-      i.actual_execution_amount !== null &&
-      i.actual_execution_amount !== undefined &&
-      i.actual_execution_amount > (i.material_unit_price + i.labor_unit_price) * i.quantity
-    )
-    .map(i => {
-      const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-      return {
-        name: `${i.work_type} - ${i.item_name ?? ''}`,
-        profit: qa - (i.actual_execution_amount ?? 0),
-      }
-    })
+  const warnings = calcWorkTypeWarnings(items, minProfitRate)
 
   return {
     finalAmount,
@@ -193,7 +213,6 @@ export function calcQuoteSummary(
     currentProfitRate,
     projectedProfit,
     projectedProfitRate,
-    minusCount: negativeItems.length,
-    negativeItems,
+    warnings,
   }
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
-import { calcEffectiveExec, calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
@@ -64,14 +64,10 @@ export default function QuoteSummaryTable({
     const total = mat + lab
     const actualExec = wtItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
     const plannedExec = wtItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
-    const effectiveExec = wtItems.reduce((s, i) => {
-      const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-      return s + calcEffectiveExec(i.actual_execution_amount ?? null, qa, minProfitRate, isContract /* 정산 여부 */).value
-    }, 0)
     const isComplete = isGroupComplete(wtItems)
-    const profit: number | null = (isComplete || effectiveExec > 0) ? total - effectiveExec : null
+    const profit: number | null = (isComplete || actualExec > 0) ? total - actualExec : null
     const profitRate: number | null = profit !== null && total > 0 ? (profit / total) * 100 : null
-    return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, plannedExec, effectiveExec, profit, profitRate, isComplete }
+    return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, plannedExec, profit, profitRate, isComplete }
   })
 
   const directMaterial = summaryRows.reduce((s, r) => s + r.materialTotal, 0)
@@ -208,11 +204,11 @@ export default function QuoteSummaryTable({
                   {isContract && (
                     <>
                       <td className={`internal-only px-4 py-2 text-xs text-right ${
-                        row.isComplete || row.effectiveExec > 0
+                        row.isComplete || row.actualExec > 0
                           ? (row.isComplete ? 'text-red-600' : 'text-gray-400 italic')
                           : 'text-gray-300'
                       }`}>
-                        {row.isComplete || row.effectiveExec > 0 ? fmt(row.effectiveExec) : '-'}
+                        {row.isComplete || row.actualExec > 0 ? fmt(row.actualExec) : '-'}
                       </td>
                       <td className={`internal-only px-4 py-2 text-xs font-semibold text-right ${
                         row.profit === null ? 'text-gray-300' :

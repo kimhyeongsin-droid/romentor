@@ -216,26 +216,25 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* 마이너스 항목 경고 (정산견적서 actual 기준) */}
-      {summary && summary.minusCount > 0 && (
+      {/* 공종별 경고 (정산견적서 actual 기준 — 마이너스/목표미달) */}
+      {summary && summary.warnings.length > 0 && (
         <div className="bg-red-50 rounded-xl border border-red-100 p-4 mb-5">
           <div className="flex items-center gap-2 mb-3">
             <AlertTriangle size={16} className="text-red-500" />
-            <span className="text-sm font-bold text-red-700">마이너스 항목 {summary.minusCount}개</span>
+            <span className="text-sm font-bold text-red-700">주의 공종 {summary.warnings.length}개</span>
           </div>
           <div className="space-y-2">
-            {summary.negativeItems.map((it, idx) => {
-              const [wt, name] = it.name.split(' - ')
-              return (
-                <div key={idx} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">{wt}</span>
-                    <span className="text-xs text-gray-700">{name}</span>
-                  </div>
-                  <span className="text-xs font-bold text-red-600">{fmt(it.profit)}원</span>
+            {summary.warnings.map((w, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${w.tier === 'deficit' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>{w.workType}</span>
+                  <span className="text-xs text-gray-700">{w.tier === 'deficit' ? '마이너스' : '목표미달'}</span>
                 </div>
-              )
-            })}
+                <span className={`text-xs font-bold ${w.tier === 'deficit' ? 'text-red-600' : 'text-amber-700'}`}>
+                  {fmt(w.profit)}원 ({w.rate.toFixed(1)}%)
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

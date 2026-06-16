@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { calcEffectiveExec, calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
+import { calcEffectiveExec, calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, type WorkTypeWarning } from '@/lib/quote-calc'
 import { DEFAULT_RATES } from '@/lib/quoteConstants'
 
 interface QuoteItem {
@@ -14,11 +14,6 @@ interface QuoteItem {
   labor_unit_price: number
   quantity: number
   actual_execution_amount: number | null
-}
-
-interface NegativeItem {
-  name: string  // "공종 - 항목명"
-  profit: number  // quoteAmt - actual (음수)
 }
 
 interface ProjectRow {
@@ -33,14 +28,15 @@ interface ProjectRow {
   completedGroups: number
   projectedProfit: number
   projectedProfitRate: number
-  minusCount: number
-  negativeItems: NegativeItem[]
+  minProfitRate: number | null
+  warnings: WorkTypeWarning[]
 }
 
 interface SmsModal {
   quoteId: string
   projectName: string
-  items: NegativeItem[]
+  minProfitRate: number | null
+  items: WorkTypeWarning[]
 }
 
 function formatDate(iso: string) {
@@ -112,20 +108,8 @@ export default function DashboardPage() {
         const projectedProfit = directQuote - effectiveTotal
         const projectedProfitRate = directQuote > 0 ? (projectedProfit / directQuote) * 100 : 0
 
-        // 마이너스 항목: actual 입력됐고 actual > 행 견적금액
-        const negativeItems: NegativeItem[] = items
-          .filter(i =>
-            i.actual_execution_amount !== null &&
-            i.actual_execution_amount !== undefined &&
-            i.actual_execution_amount > (i.material_unit_price + i.labor_unit_price) * i.quantity
-          )
-          .map(i => {
-            const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-            return {
-              name: `${i.work_type} - ${i.item_name}`,
-              profit: qa - i.actual_execution_amount!,
-            }
-          })
+        // 공종별 경고: 마이너스(적자) + 목표미달 (actual만 합산, 부분 입력 실시간 반영)
+        const warnings = calcWorkTypeWarnings(items, minProfitRate)
 
         return {
           projectId: q.project_id,
@@ -139,8 +123,8 @@ export default function DashboardPage() {
           completedGroups,
           projectedProfit,
           projectedProfitRate,
-          minusCount: negativeItems.length,
-          negativeItems,
+          minProfitRate,
+          warnings,
         }
       })
 
@@ -160,7 +144,7 @@ export default function DashboardPage() {
 
   function openModal(row: ProjectRow) {
     setSmsError(null)
-    setSmsModal({ quoteId: row.quoteId, projectName: row.projectName, items: row.negativeItems })
+    setSmsModal({ quoteId: row.quoteId, projectName: row.projectName, minProfitRate: row.minProfitRate, items: row.warnings })
   }
 
   function closeModal() {
@@ -180,7 +164,13 @@ export default function DashboardPage() {
         body: JSON.stringify({
           type: 'item_minus',
           quoteId: smsModal.quoteId,
-          items: smsModal.items,
+          items: smsModal.items.map(w => ({
+            name: w.workType,
+            profit: w.profit,
+            rate: w.rate,
+            tier: w.tier,
+            target: smsModal.minProfitRate ?? 0,
+          })),
         }),
       })
       const data = await res.json()
@@ -225,7 +215,7 @@ export default function DashboardPage() {
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">시작일</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">진행률</th>
                   <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">현재까지 예상 이윤</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">마이너스</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">경고 공종</th>
                   <th className="px-5 py-3 w-16"></th>
                 </tr>
               </thead>
@@ -234,9 +224,10 @@ export default function DashboardPage() {
                   const progressPct = row.totalGroups > 0
                     ? (row.completedGroups / row.totalGroups) * 100
                     : 0
-                  const hasMinus = row.minusCount > 0
+                  const warningCount = row.warnings.length
+                  const hasDeficit = row.warnings.some(w => w.tier === 'deficit')
                   return (
-                    <tr key={row.projectId} className={`transition-colors ${hasMinus ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}>
+                    <tr key={row.projectId} className={`transition-colors ${hasDeficit ? 'bg-red-50 hover:bg-red-100' : warningCount > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
                       <td className="px-5 py-3.5">
                         <div className="font-semibold text-gray-900">{row.projectName}</div>
                         <div className="text-xs text-gray-400 mt-0.5 font-mono">{row.quoteNumber}</div>
@@ -263,12 +254,12 @@ export default function DashboardPage() {
                         </span>
                       </td>
                       <td className="px-5 py-3.5">
-                        {hasMinus ? (
+                        {warningCount > 0 ? (
                           <button
                             onClick={() => openModal(row)}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 transition-colors cursor-pointer"
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${hasDeficit ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}
                           >
-                            ⚠ {row.minusCount}건
+                            ⚠ {warningCount}건
                           </button>
                         ) : (
                           <span className="text-xs text-gray-400">정상</span>
@@ -299,7 +290,7 @@ export default function DashboardPage() {
         >
           <div ref={modalRef} className="bg-white rounded-xl shadow-xl w-full max-w-md">
             <div className="px-6 py-4 border-b border-gray-100">
-              <h3 className="font-bold text-gray-900">마이너스 항목 SMS 발송</h3>
+              <h3 className="font-bold text-gray-900">경고 공종 SMS 발송</h3>
               <p className="text-sm text-gray-500 mt-0.5">{smsModal.projectName}</p>
             </div>
 
@@ -309,16 +300,20 @@ export default function DashboardPage() {
                 <table className="w-full text-xs">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
-                      <th className="px-3 py-2 text-left font-semibold text-gray-500">항목</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">공종</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">상태</th>
                       <th className="px-3 py-2 text-right font-semibold text-gray-500">이윤</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {smsModal.items.map((item, idx) => (
+                    {smsModal.items.map((w, idx) => (
                       <tr key={idx} className="hover:bg-red-50">
-                        <td className="px-3 py-2 text-gray-700">{item.name}</td>
-                        <td className="px-3 py-2 text-right font-semibold text-red-600 tabular-nums">
-                          {fmt(item.profit)}원
+                        <td className="px-3 py-2 text-gray-700">{w.workType}</td>
+                        <td className={`px-3 py-2 ${w.tier === 'deficit' ? 'text-red-600' : 'text-amber-700'}`}>
+                          {w.tier === 'deficit' ? '마이너스' : '목표미달'}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-semibold tabular-nums ${w.tier === 'deficit' ? 'text-red-600' : 'text-amber-700'}`}>
+                          {fmt(w.profit)}원 ({w.rate.toFixed(1)}%)
                         </td>
                       </tr>
                     ))}

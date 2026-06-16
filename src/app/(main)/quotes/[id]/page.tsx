@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcEffectiveExec, calcFinalAmount, isGroupComplete, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -97,9 +97,8 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
 
   const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
   const actual = item.actual_execution_amount
-  const { value: execValue, isProjected } = calcEffectiveExec(actual, quoteAmt, minProfitRate, isSettlement)
   const isActualBased = actual !== null && actual !== undefined
-  const profit: number | null = (isActualBased || execValue > 0) && quoteAmt > 0 ? quoteAmt - execValue : null
+  const profit: number | null = isActualBased && quoteAmt > 0 ? quoteAmt - actual! : null
   const profitRate: number | null = profit !== null && quoteAmt > 0 ? (profit / quoteAmt) * 100 : null
   const isMinus = profit !== null && profit < 0 && isActualBased
   const showCol = (key: string) => !isSettlement || visibleColumns[key] !== false
@@ -295,6 +294,7 @@ export default function QuoteDetailPage() {
   const [printMode, setPrintMode] = useState<null | 'client' | 'internal'>(null)
   const [minProfitRate, setMinProfitRate] = useState<number | null>(null)
   const [worktypeMemos, setWorktypeMemos] = useState<Record<string, string>>({})
+  const [settlementDone, setSettlementDone] = useState<Record<string, boolean>>({})
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return Object.fromEntries(TOGGLEABLE_COLUMNS.map(c => [c.key, true]))
     try {
@@ -353,6 +353,7 @@ export default function QuoteDetailPage() {
       setQuote(q)
       if (q) {
         setMinProfitRate(q.min_profit_rate ?? q.projects?.min_profit_rate ?? null)
+        setSettlementDone((q.settlement_done as Record<string, boolean> | null) ?? {})
         const round2 = (n: number) => Math.round(n * 100) / 100
         if (q.rate_accident_insurance != null) {
           setRates({
@@ -518,7 +519,7 @@ export default function QuoteDetailPage() {
           const planned = (item.planned_execution_amount ?? 0) > 0
             ? item.planned_execution_amount!
             : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : 0)
-          const effective = hasActual ? item.actual_execution_amount! : planned
+          const effective = hasActual ? item.actual_execution_amount! : 0
           e.amount += qa
           e.expected += planned
           e.effective += effective
@@ -642,6 +643,7 @@ export default function QuoteDetailPage() {
         rate_vat: rates.vat / 100,
         discount_amount: discount || 0,
         ...(isSettlement && { min_profit_rate: minProfitRate ?? 15 }),
+        ...(isSettlement && { settlement_done: settlementDone }),
       }).eq('id', id)
 
       // trg_quotes_discount(BEFORE trigger)가 discount_amount 변경 시 final_amount를
@@ -870,9 +872,20 @@ export default function QuoteDetailPage() {
                   const actualCount = gItems.filter(i => i.actual_execution_amount !== null && i.actual_execution_amount !== undefined).length
                   return <span className="text-xs text-gray-400 ml-1">{actualCount}/{gItems.length} 실입력</span>
                 })()}
+                {isSettlement && (
+                  <label className={`no-print ml-auto flex items-center gap-1.5 text-xs ${isEditable ? 'cursor-pointer' : 'cursor-default'}`}>
+                    <input
+                      type="checkbox"
+                      checked={settlementDone[wt] === true}
+                      disabled={!isEditable}
+                      onChange={e => setSettlementDone(prev => ({ ...prev, [wt]: e.target.checked }))}
+                    />
+                    <span className={settlementDone[wt] ? 'text-green-600 font-semibold' : 'text-gray-400'}>정산 완료</span>
+                  </label>
+                )}
                 {isEditable && (
                   <button onClick={() => addItem(wt)}
-                    className="no-print text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 ml-auto">
+                    className={`no-print text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1${isSettlement ? '' : ' ml-auto'}`}>
                     <Plus size={12} /> 항목 추가
                   </button>
                 )}
@@ -1007,12 +1020,8 @@ export default function QuoteDetailPage() {
                             : (minProfitRate != null && qa > 0 ? Math.floor(qa * (1 - minProfitRate / 100)) : 0))
                         }, 0)
                         const groupActual = gItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
-                        const groupEffective = gItems.reduce((s, i) => {
-                          const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-                          return s + calcEffectiveExec(i.actual_execution_amount, qa, minProfitRate, isSettlement).value
-                        }, 0)
                         const groupIsComplete = isGroupComplete(gItems)
-                        const groupProfit: number | null = (groupIsComplete || groupEffective > 0) ? groupQuote - groupEffective : null
+                        const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupActual : null
                         const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
                         const leadingSpan = 1 + (['comment', 'unit', 'quantity'] as const).filter(k => showCol(k)).length
                         const trailingSpan = (showCol('remark') ? 1 : 0) + (isEditable ? 1 : 0)
