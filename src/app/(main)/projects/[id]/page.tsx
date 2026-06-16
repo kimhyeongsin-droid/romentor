@@ -171,7 +171,7 @@ export default function ProjectDetailPage() {
               const positive = has && cp! >= 0
               return (
                 <div className={`rounded-xl border p-4 ${!has ? 'bg-white border-gray-100' : positive ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-                  <p className="text-xs text-gray-400 mb-1">현재까지 이윤 <span className="text-gray-300">(확정 공종)</span></p>
+                  <p className="text-xs text-gray-400 mb-1">확정 이윤 <span className="text-gray-300">(완료 공종)</span></p>
                   {has ? (
                     <>
                       <p className={`text-lg font-bold ${positive ? 'text-green-700' : 'text-red-700'}`}>

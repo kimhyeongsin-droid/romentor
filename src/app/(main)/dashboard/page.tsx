@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { calcEffectiveExec, calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, type WorkTypeWarning } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, calcProjectedExec, type WorkTypeWarning } from '@/lib/quote-calc'
 import { DEFAULT_RATES } from '@/lib/quoteConstants'
 
 interface QuoteItem {
@@ -99,13 +99,9 @@ export default function DashboardPage() {
         const totalGroups = nonEmpty.length
         const completedGroups = nonEmpty.filter(g => isGroupComplete(g)).length
 
-        // 직접공사비 + 예상이윤
+        // 직접공사비 + 예상 이윤 (공정별 MAX(실제합, 목표합) lump-safe projection)
         const directQuote = directQuoteCalc
-        const effectiveTotal = items.reduce((s, i) => {
-          const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-          return s + calcEffectiveExec(i.actual_execution_amount, qa, minProfitRate, true).value
-        }, 0)
-        const projectedProfit = directQuote - effectiveTotal
+        const projectedProfit = directQuote - calcProjectedExec(items, minProfitRate)
         const projectedProfitRate = directQuote > 0 ? (projectedProfit / directQuote) * 100 : 0
 
         // 공종별 경고: 마이너스(적자) + 목표미달 (actual만 합산, 부분 입력 실시간 반영)
@@ -214,7 +210,7 @@ export default function DashboardPage() {
                   <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">직접공사비</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">시작일</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">진행률</th>
-                  <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">현재까지 예상 이윤</th>
+                  <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">예상 이윤</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">경고 공종</th>
                   <th className="px-5 py-3 w-16"></th>
                 </tr>

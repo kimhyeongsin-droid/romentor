@@ -114,6 +114,7 @@ export interface QuoteSummaryItem {
   material_amount?: number
   labor_amount?: number
   actual_execution_amount?: number | null
+  planned_execution_amount?: number | null
 }
 
 export interface QuoteSummary {
@@ -166,6 +167,27 @@ export function calcWorkTypeWarnings(
   return out
 }
 
+// 공정(work_type) 단위 lump-safe projection. 공정 예상비용 = MAX(실제입력합, 목표실행가합).
+// 목표실행가(라인) = planned_execution_amount>0 ? planned : floor(qa*(1-rate)). qa<=0 라인은 0 기여.
+export function calcProjectedExec(
+  items: QuoteSummaryItem[],
+  minProfitRate: number | null | undefined
+): number {
+  const map: Record<string, { actualSum: number; plannedSum: number }> = {}
+  for (const i of items) {
+    const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
+    if (qa <= 0) continue
+    const wt = i.work_type || '기타'
+    if (!map[wt]) map[wt] = { actualSum: 0, plannedSum: 0 }
+    const e = map[wt]
+    e.actualSum += i.actual_execution_amount ?? 0
+    e.plannedSum += (i.planned_execution_amount ?? 0) > 0
+      ? i.planned_execution_amount!
+      : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
+  }
+  return Object.values(map).reduce((s, e) => s + Math.max(e.actualSum, e.plannedSum), 0)
+}
+
 export function calcQuoteSummary(
   items: QuoteSummaryItem[],
   rates: { accident: number; employment: number; overhead: number; profit: number; vat: number },
@@ -196,8 +218,7 @@ export function calcQuoteSummary(
   const currentProfitRate: number | null = currentProfit !== null && currentQuoteSum > 0
     ? (currentProfit / currentQuoteSum) * 100 : null
 
-  const effectiveTotal = items.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
-  const projectedProfit = directTotal - effectiveTotal
+  const projectedProfit = directTotal - calcProjectedExec(items, minProfitRate)
   const projectedProfitRate = directTotal > 0 ? (projectedProfit / directTotal) * 100 : 0
 
   const warnings = calcWorkTypeWarnings(items, minProfitRate)
