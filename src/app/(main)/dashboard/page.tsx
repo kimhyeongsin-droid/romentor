@@ -210,6 +210,7 @@ export default function DashboardPage() {
                   <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">직접공사비</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">시작일</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">진행률</th>
+                  <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">목표 이윤율</th>
                   <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500">예상 이윤</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500">경고 공종</th>
                   <th className="px-5 py-3 w-16"></th>
@@ -240,6 +241,9 @@ export default function DashboardPage() {
                       <td className="px-5 py-3.5 text-gray-700">
                         {row.completedGroups}/{row.totalGroups}
                         <span className="text-gray-400 text-xs ml-1.5">({progressPct.toFixed(1)}%)</span>
+                      </td>
+                      <td className="px-5 py-3.5 text-right text-gray-700 tabular-nums">
+                        {row.minProfitRate != null ? `${row.minProfitRate}%` : '-'}
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <span className={`font-semibold ${row.projectedProfit < 0 ? 'text-red-600' : 'text-gray-900'} tabular-nums`}>
