@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Bell, BellOff, Plus, Trash2 } from 'lucide-react'
 
 type Member = { name: string; phone: string; notify: boolean }
+type Staff = { id: string; name: string; email: string }
 
 export default function NewProjectPage() {
   const router = useRouter()
@@ -19,6 +20,27 @@ export default function NewProjectPage() {
   const [designers, setDesigners] = useState<Member[]>([])
   const [siteManagers, setSiteManagers] = useState<Member[]>([])
   const [loading, setLoading] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [staffList, setStaffList] = useState<Staff[]>([])
+  const [selectedAssignees, setSelectedAssignees] = useState<string[]>([])
+
+  useEffect(() => {
+    const sb = createClient()
+    ;(async () => {
+      const { data: { user } } = await sb.auth.getUser()
+      if (!user) return
+      const { data: prof } = await sb.from('profiles').select('role').eq('id', user.id).single()
+      const admin = prof?.role === 'admin'
+      setIsAdmin(admin)
+      if (admin) {
+        const { data: staff } = await sb.from('profiles').select('id, name, email').eq('role', 'staff').order('name')
+        setStaffList(staff ?? [])
+      }
+    })()
+  }, [])
+
+  const toggleAssignee = (uid: string) =>
+    setSelectedAssignees(prev => prev.includes(uid) ? prev.filter(x => x !== uid) : [...prev, uid])
 
   const handleUnitToggle = (unit: 'sqm' | 'py') => {
     if (unit === areaUnit) return
@@ -52,8 +74,9 @@ export default function NewProjectPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    const sb = createClient()
     const first = (arr: Member[]) => arr[0] ?? { name: '', phone: '', notify: true }
-    const { error } = await createClient().from('projects').insert({
+    const { data: created, error } = await sb.from('projects').insert({
       name,
       address,
       area_sqm: getAreaSqm(),
@@ -72,9 +95,16 @@ export default function NewProjectPage() {
       designers: designers.filter(m => m.name),
       site_managers: siteManagers.filter(m => m.name),
       min_profit_rate: 15,
-    })
-    if (!error) router.push('/projects')
-    else { alert('저장 실패: ' + error.message); setLoading(false) }
+    }).select('id').single()
+    if (error || !created) { alert('저장 실패: ' + (error?.message ?? '알 수 없는 오류')); setLoading(false); return }
+
+    if (selectedAssignees.length > 0) {
+      const { error: paErr } = await sb.from('project_assignees').insert(
+        selectedAssignees.map(uid => ({ project_id: created.id, user_id: uid }))
+      )
+      if (paErr) alert('프로젝트는 생성됐으나 담당자 배정 실패: ' + paErr.message)
+    }
+    router.push('/projects')
   }
 
   return (
@@ -176,6 +206,28 @@ export default function NewProjectPage() {
           onChange={(idx, f, v) => updateMember(setSiteManagers, idx, f, v)}
           onToggleNotify={idx => toggleNotify(setSiteManagers, idx)}
         />
+
+        {/* 담당 직원 (시스템 접근 권한) — admin 전용. SMS 연락처(MemberSection)와 별개 */}
+        {isAdmin && (
+          <div className="bg-white rounded-xl border-2 border-purple-200 shadow-sm p-6 space-y-3">
+            <p className="text-sm font-semibold text-purple-700">
+              담당 직원 <span className="text-xs font-normal text-purple-400">(시스템 접근·대시보드 노출 권한)</span>
+            </p>
+            {staffList.length === 0 ? (
+              <p className="text-xs text-gray-400">등록된 직원이 없습니다.</p>
+            ) : (
+              <div className="space-y-1">
+                {staffList.map(s => (
+                  <label key={s.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-purple-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedAssignees.includes(s.id)} onChange={() => toggleAssignee(s.id)} />
+                    <span className="text-sm text-gray-700">{s.name}</span>
+                    <span className="text-xs text-gray-400">{s.email}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-3 pt-2">
           <button type="submit" disabled={loading}

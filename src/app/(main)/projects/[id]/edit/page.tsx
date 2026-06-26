@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Bell, BellOff, Plus, Save, Trash2 } from 'lucide-react'
 
 type Member = { name: string; phone: string; notify: boolean }
+type Staff = { id: string; name: string; email: string }
 
 const STATUS_OPTIONS = [
   { value: 'draft', label: '작성중' },
@@ -28,6 +29,31 @@ export default function ProjectEditPage() {
   const [pms, setPms] = useState<Member[]>([{ name: '', phone: '', notify: true }])
   const [designers, setDesigners] = useState<Member[]>([])
   const [siteManagers, setSiteManagers] = useState<Member[]>([])
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [staffList, setStaffList] = useState<Staff[]>([])
+  const [selectedAssignees, setSelectedAssignees] = useState<string[]>([])
+
+  useEffect(() => {
+    const sb = createClient()
+    ;(async () => {
+      const { data: { user } } = await sb.auth.getUser()
+      if (!user) return
+      const { data: prof } = await sb.from('profiles').select('role').eq('id', user.id).single()
+      const admin = prof?.role === 'admin'
+      setIsAdmin(admin)
+      if (admin) {
+        const [{ data: staff }, { data: pa }] = await Promise.all([
+          sb.from('profiles').select('id, name, email').eq('role', 'staff').order('name'),
+          sb.from('project_assignees').select('user_id').eq('project_id', id),
+        ])
+        setStaffList(staff ?? [])
+        setSelectedAssignees((pa ?? []).map((r: any) => r.user_id))
+      }
+    })()
+  }, [id])
+
+  const toggleAssignee = (uid: string) =>
+    setSelectedAssignees(prev => prev.includes(uid) ? prev.filter(x => x !== uid) : [...prev, uid])
 
   useEffect(() => {
     createClient()
@@ -91,8 +117,9 @@ export default function ProjectEditPage() {
 
   const handleSave = async () => {
     setSaving(true)
+    const sb = createClient()
     const first = (arr: Member[]) => arr[0] ?? { name: '', phone: '', notify: true }
-    const { error } = await createClient().from('projects').update({
+    const { error } = await sb.from('projects').update({
       name: basicForm.name,
       address: basicForm.address,
       area_sqm: basicForm.area_sqm ? Number(basicForm.area_sqm) : null,
@@ -112,9 +139,23 @@ export default function ProjectEditPage() {
       designers: designers.filter(m => m.name),
       site_managers: siteManagers.filter(m => m.name),
     }).eq('id', id)
+
+    if (error) { setSaving(false); alert('저장 중 오류가 발생했습니다: ' + error.message); return }
+
+    // 담당 직원 동기화 (admin 전용): 기존 전체 삭제 후 선택분 재삽입
+    if (isAdmin) {
+      const { error: delErr } = await sb.from('project_assignees').delete().eq('project_id', id)
+      if (delErr) { setSaving(false); alert('담당 직원 배정 저장 실패: ' + delErr.message); return }
+      if (selectedAssignees.length > 0) {
+        const { error: insErr } = await sb.from('project_assignees').insert(
+          selectedAssignees.map(uid => ({ project_id: id, user_id: uid }))
+        )
+        if (insErr) { setSaving(false); alert('담당 직원 배정 저장 실패: ' + insErr.message); return }
+      }
+    }
+
     setSaving(false)
-    if (!error) router.push('/projects')
-    else alert('저장 중 오류가 발생했습니다: ' + error.message)
+    router.push('/projects')
   }
 
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
@@ -213,6 +254,28 @@ export default function ProjectEditPage() {
           onChange={(idx, f, v) => updateMember(setSiteManagers, idx, f, v)}
           onToggleNotify={idx => toggleNotify(setSiteManagers, idx)}
         />
+
+        {/* 담당 직원 (시스템 접근 권한) — admin 전용. SMS 연락처(MemberSection)와 별개 */}
+        {isAdmin && (
+          <div className="bg-white rounded-xl border-2 border-purple-200 shadow-sm p-6 space-y-3">
+            <p className="text-sm font-semibold text-purple-700">
+              담당 직원 <span className="text-xs font-normal text-purple-400">(시스템 접근·대시보드 노출 권한)</span>
+            </p>
+            {staffList.length === 0 ? (
+              <p className="text-xs text-gray-400">등록된 직원이 없습니다.</p>
+            ) : (
+              <div className="space-y-1">
+                {staffList.map(s => (
+                  <label key={s.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-purple-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedAssignees.includes(s.id)} onChange={() => toggleAssignee(s.id)} />
+                    <span className="text-sm text-gray-700">{s.name}</span>
+                    <span className="text-xs text-gray-400">{s.email}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-3 mt-2">
           <button onClick={() => router.push('/projects')}
