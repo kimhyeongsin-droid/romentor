@@ -178,25 +178,31 @@ export function calcWorkTypeWarnings(
   return out
 }
 
-// 공정(work_type) 단위 lump-safe projection. 공정 예상비용 = MAX(실제입력합, 목표실행가합).
+// 공정(work_type) 단위 lump-safe projection.
+// - 완료 공종(모든 항목 실입력): 실제원가합 그대로 반영 → 목표 초과분도 그대로 드러남.
+// - 미완료 공종: MAX(실제입력합, 목표실행가합) — 일부만 입력된 공종이 비용 0 취급으로 이윤을 부풀리는 것 방지.
 // 목표실행가(라인) = planned_execution_amount>0 ? planned : floor(qa*(1-rate)). qa<=0 라인은 0 기여.
 export function calcProjectedExec(
   items: QuoteSummaryItem[],
   minProfitRate: number | null | undefined
 ): number {
-  const map: Record<string, { actualSum: number; plannedSum: number }> = {}
+  const map: Record<string, { actualSum: number; plannedSum: number; items: QuoteSummaryItem[] }> = {}
   for (const i of items) {
+    const wt = i.work_type || '기타'
+    if (!map[wt]) map[wt] = { actualSum: 0, plannedSum: 0, items: [] }
+    const e = map[wt]
+    e.items.push(i)
     const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
     if (qa <= 0) continue
-    const wt = i.work_type || '기타'
-    if (!map[wt]) map[wt] = { actualSum: 0, plannedSum: 0 }
-    const e = map[wt]
     e.actualSum += actualCost(i)
     e.plannedSum += (i.planned_execution_amount ?? 0) > 0
       ? i.planned_execution_amount!
       : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
   }
-  return Object.values(map).reduce((s, e) => s + Math.max(e.actualSum, e.plannedSum), 0)
+  return Object.values(map).reduce(
+    (s, e) => s + (isGroupComplete(e.items) ? e.actualSum : Math.max(e.actualSum, e.plannedSum)),
+    0
+  )
 }
 
 export function calcQuoteSummary(

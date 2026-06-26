@@ -224,6 +224,9 @@ export default function DashboardPage() {
                     : 0
                   const warningCount = row.warnings.length
                   const hasDeficit = row.warnings.some(w => w.tier === 'deficit')
+                  const hasTarget = row.minProfitRate != null
+                  const achievingTarget = hasTarget && row.projectedProfitRate >= row.minProfitRate!
+                  const belowTarget = hasTarget && row.projectedProfitRate < row.minProfitRate!
                   return (
                     <tr key={row.projectId} className={`transition-colors ${hasDeficit ? 'bg-red-50 hover:bg-red-100' : warningCount > 0 ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
                       <td className="px-5 py-3.5">
@@ -247,12 +250,27 @@ export default function DashboardPage() {
                         {row.minProfitRate != null ? `${row.minProfitRate}%` : '-'}
                       </td>
                       <td className="px-5 py-3.5 text-right">
-                        <span className={`font-semibold ${row.projectedProfit < 0 ? 'text-red-600' : 'text-gray-900'} tabular-nums`}>
-                          {fmt(row.projectedProfit)}원
-                        </span>
-                        <span className={`text-xs ml-1.5 ${row.projectedProfitRate < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                          ({row.projectedProfitRate.toFixed(1)}%)
-                        </span>
+                        <div>
+                          <span className={`font-semibold ${row.projectedProfit < 0 ? 'text-red-600' : 'text-gray-900'} tabular-nums`}>
+                            {fmt(row.projectedProfit)}원
+                          </span>
+                          <span className={`text-xs ml-1.5 font-medium ${
+                            belowTarget ? 'text-red-600' : achievingTarget ? 'text-green-600' :
+                            row.projectedProfitRate < 0 ? 'text-red-400' : 'text-gray-400'
+                          }`}>
+                            ({row.projectedProfitRate.toFixed(1)}%)
+                          </span>
+                        </div>
+                        {belowTarget && (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700 ring-1 ring-red-300">
+                            ▼ 목표 미달 {(row.minProfitRate! - row.projectedProfitRate).toFixed(1)}%p
+                          </span>
+                        )}
+                        {achievingTarget && (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                            ✓ 이윤 달성중
+                          </span>
+                        )}
                       </td>
                       <td className="px-5 py-3.5">
                         {warningCount > 0 ? (
