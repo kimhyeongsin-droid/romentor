@@ -15,6 +15,7 @@ interface QuoteItem {
   quantity: number
   actual_execution_amount: number | null
   actual_vat_included: boolean | null
+  settlement_type: string | null
 }
 
 interface ProjectRow {
@@ -59,7 +60,7 @@ export default function DashboardPage() {
       const sb = createClient()
       const { data: quotes } = await sb
         .from('quotes')
-        .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included)')
+        .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included, settlement_type)')
         .eq('type', '정산')
         .order('updated_at', { ascending: false })
 

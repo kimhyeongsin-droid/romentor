@@ -5,6 +5,7 @@ export interface FinalAmountInput {
     quantity: number
     material_amount?: number
     labor_amount?: number
+    settlement_type?: string | null
   }>
   rates: {
     accident: number
@@ -31,8 +32,8 @@ export interface FinalAmountResult {
 
 export function calcFinalAmount(input: FinalAmountInput): FinalAmountResult {
   const { items, rates, discount } = input
-  const totalMaterial = items.reduce((s, i) => s + (i.material_amount ?? i.material_unit_price * i.quantity), 0)
-  const totalLabor    = items.reduce((s, i) => s + (i.labor_amount    ?? i.labor_unit_price    * i.quantity), 0)
+  const totalMaterial = items.reduce((s, i) => s + (isExcludedFromProfit(i) ? 0 : (i.material_amount ?? i.material_unit_price * i.quantity)), 0)
+  const totalLabor    = items.reduce((s, i) => s + (isExcludedFromProfit(i) ? 0 : (i.labor_amount    ?? i.labor_unit_price    * i.quantity)), 0)
   const directTotal   = totalMaterial + totalLabor
   const indirectAccident   = Math.floor(totalLabor  * rates.accident   / 100)
   const indirectEmployment = Math.floor(totalLabor  * rates.employment / 100)
@@ -116,6 +117,7 @@ export interface QuoteSummaryItem {
   actual_execution_amount?: number | null
   actual_vat_included?: boolean | null
   planned_execution_amount?: number | null
+  settlement_type?: string | null
 }
 
 // 이윤 계산용 실제 원가. 부가세 포함 입력이면 공급가(÷1.1)로 환산, 별도면 입력값 그대로.
@@ -126,6 +128,11 @@ export function actualCost(
   const a = i.actual_execution_amount
   if (a == null) return 0
   return i.actual_vat_included ? Math.round(a / 1.1) : a
+}
+
+// 별도(외부 정산)·제외 항목은 이윤 계산(매출 분모·원가 분자) 양쪽에서 완전히 빠진다.
+export function isExcludedFromProfit(i: { settlement_type?: string | null }): boolean {
+  return i.settlement_type === '별도' || i.settlement_type === '제외'
 }
 
 export interface QuoteSummary {
@@ -159,6 +166,7 @@ export function calcWorkTypeWarnings(
 ): WorkTypeWarning[] {
   const map: Record<string, { amount: number; expected: number; effective: number }> = {}
   for (const i of items) {
+    if (isExcludedFromProfit(i)) continue
     const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
     if (qa <= 0) continue
     const wt = i.work_type || '기타'
@@ -188,6 +196,7 @@ export function calcProjectedExec(
 ): number {
   const map: Record<string, { actualSum: number; plannedSum: number; items: QuoteSummaryItem[] }> = {}
   for (const i of items) {
+    if (isExcludedFromProfit(i)) continue
     const wt = i.work_type || '기타'
     if (!map[wt]) map[wt] = { actualSum: 0, plannedSum: 0, items: [] }
     const e = map[wt]
@@ -212,9 +221,10 @@ export function calcQuoteSummary(
   minProfitRate: number | null | undefined,
   isSettlement: boolean
 ): QuoteSummary {
-  const { finalAmount, directTotal } = calcFinalAmount({ items, rates, discount })
+  const profitItems = items.filter(i => !isExcludedFromProfit(i))
+  const { finalAmount, directTotal } = calcFinalAmount({ items: profitItems, rates, discount })
 
-  const grouped = items.reduce((acc, i) => {
+  const grouped = profitItems.reduce((acc, i) => {
     const wt = i.work_type || '기타'
     if (!acc[wt]) acc[wt] = []
     acc[wt].push(i)
@@ -235,10 +245,10 @@ export function calcQuoteSummary(
   const currentProfitRate: number | null = currentProfit !== null && currentQuoteSum > 0
     ? (currentProfit / currentQuoteSum) * 100 : null
 
-  const projectedProfit = directTotal - calcProjectedExec(items, minProfitRate)
+  const projectedProfit = directTotal - calcProjectedExec(profitItems, minProfitRate)
   const projectedProfitRate = directTotal > 0 ? (projectedProfit / directTotal) * 100 : 0
 
-  const warnings = calcWorkTypeWarnings(items, minProfitRate)
+  const warnings = calcWorkTypeWarnings(profitItems, minProfitRate)
 
   return {
     finalAmount,

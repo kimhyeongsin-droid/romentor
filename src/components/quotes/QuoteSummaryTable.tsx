@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
-import { calcFinalAmount, isGroupComplete, actualCost } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit } from '@/lib/quote-calc'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
@@ -17,6 +17,7 @@ export interface Rates {
 
 interface ItemForSummary {
   work_type: string
+  item_name?: string
   material_unit_price: number
   labor_unit_price: number
   quantity: number
@@ -24,6 +25,7 @@ interface ItemForSummary {
   planned_execution_amount?: number | null
   actual_execution_amount?: number | null
   actual_vat_included?: boolean | null
+  settlement_type?: string | null
 }
 
 interface Props {
@@ -57,9 +59,9 @@ export default function QuoteSummaryTable({
     'romentor.quoteSummaryTable.settlement.colWidths', SUMMARY_DEFAULT_WIDTHS
   )
   const summaryWidths = isContract ? resizableSummaryWidths : SUMMARY_DEFAULT_WIDTHS
-  // 공종별 집계 (실행금액 포함)
+  // 공종별 집계 (실행금액 포함). 별도/제외 항목은 매출·원가 양쪽에서 빠짐.
   const summaryRows = WORK_ORDER.map(wt => {
-    const wtItems = items.filter(i => i.work_type === wt)
+    const wtItems = items.filter(i => i.work_type === wt && !isExcludedFromProfit(i))
     const mat  = wtItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0)
     const lab  = wtItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0)
     const total = mat + lab
@@ -89,13 +91,15 @@ export default function QuoteSummaryTable({
     discount,
   })
 
-  // 확정 공종 기준 집계 (공종 내 모든 행 actual 입력 완료된 공종만 포함)
-  const groupedByWt = items.reduce((acc, i) => {
+  // 확정 공종 기준 집계 (공종 내 모든 행 actual 입력 완료된 공종만 포함). 별도/제외 제외.
+  const profitItems = items.filter(i => !isExcludedFromProfit(i))
+  const groupedByWt = profitItems.reduce((acc, i) => {
     const wt = i.work_type || '기타'
     if (!acc[wt]) acc[wt] = []
     acc[wt].push(i)
     return acc
   }, {} as Record<string, typeof items>)
+  const excludedItems = items.filter(isExcludedFromProfit)
   const nonEmptyGroups = Object.values(groupedByWt).filter(g => g.length > 0)
   const totalGroups = nonEmptyGroups.length
   const completedGroups = nonEmptyGroups.filter(g => isGroupComplete(g)).length
@@ -143,6 +147,7 @@ export default function QuoteSummaryTable({
       )}
 
       {open && (
+        <>
         <div className="overflow-x-auto">
           <table className={`w-full text-sm min-w-[600px]${isContract ? ' table-fixed' : ''}`}>
             <thead>
@@ -442,6 +447,39 @@ export default function QuoteSummaryTable({
             </tbody>
           </table>
         </div>
+
+        {isContract && excludedItems.length > 0 && (
+          <div className="internal-only border-t border-gray-200 px-5 py-4">
+            <div className="text-xs font-bold text-gray-700 mb-2">별도 · 제외 내역 <span className="font-normal text-gray-400">(이윤 계산 미포함)</span></div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-gray-500">
+                    <th className="px-3 py-1.5 text-left font-semibold">항목명</th>
+                    <th className="px-3 py-1.5 text-left font-semibold">공종</th>
+                    <th className="px-3 py-1.5 text-right font-semibold">실제실행가</th>
+                    <th className="px-3 py-1.5 text-center font-semibold">구분</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {excludedItems.map((i, idx) => (
+                    <tr key={idx} className="text-gray-500">
+                      <td className="px-3 py-1.5 text-left">{i.item_name ?? '-'}</td>
+                      <td className="px-3 py-1.5 text-left">{i.work_type}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{i.actual_execution_amount != null ? fmt(i.actual_execution_amount) : '-'}</td>
+                      <td className="px-3 py-1.5 text-center">
+                        <span className={`px-2 py-0.5 rounded-full font-semibold ${i.settlement_type === '별도' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-600'}`}>
+                          {i.settlement_type}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        </>
       )}
     </div>
   )

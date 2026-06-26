@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcFinalAmount, isGroupComplete, actualCost, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -35,6 +35,7 @@ const TOGGLEABLE_COLUMNS = [
   { key: 'profit', label: '이윤' },
   { key: 'profit_rate', label: '이윤율' },
   { key: 'vat_included', label: '부가세 제외' },
+  { key: 'settlement_type', label: '구분' },
   { key: 'remark', label: '비고' },
 ]
 const COLUMN_VISIBILITY_KEY = 'romentor.quoteItemTable.settlement.visibleColumns'
@@ -43,7 +44,7 @@ const ITEM_DEFAULT_WIDTHS = {
   item_name: 180, comment: 150, unit: 50, quantity: 60,
   material_unit_price: 90, material_amount: 90, labor_unit_price: 90, labor_amount: 90,
   total_unit_price: 80, total_amount: 90, planned_execution: 100, execution_date: 110,
-  actual_execution: 100, profit: 80, profit_rate: 70, vat_included: 60, remark: 100, delete: 32,
+  actual_execution: 100, profit: 80, profit_rate: 70, vat_included: 60, settlement_type: 72, remark: 100, delete: 32,
 }
 
 function autoResize(el: HTMLTextAreaElement) {
@@ -63,6 +64,7 @@ interface QuoteItem {
   planned_execution_amount: number | null
   actual_execution_amount: number | null
   actual_vat_included: boolean
+  settlement_type: string
   execution_amount: number | null
   execution_date: string | null
   execution_memo: string | null
@@ -104,10 +106,14 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
   const profit: number | null = isActualBased && quoteAmt > 0 ? quoteAmt - cost : null
   const profitRate: number | null = profit !== null && quoteAmt > 0 ? (profit / quoteAmt) * 100 : null
   const isMinus = profit !== null && profit < 0 && isActualBased
+  const isExcluded = isExcludedFromProfit(item)
   const showCol = (key: string) => !isSettlement || visibleColumns[key] !== false
 
   return (
-    <tr ref={setNodeRef} style={style} className={`group hover:bg-gray-50 ${isSettlement && isMinus ? 'bg-red-50 border-l-2 border-red-400' : ''}`}>
+    <tr ref={setNodeRef} style={style} className={`group hover:bg-gray-50 ${
+      isSettlement && isExcluded ? 'bg-gray-100 text-gray-400'
+      : isSettlement && isMinus ? 'bg-red-50 border-l-2 border-red-400' : ''
+    }`}>
       <td className="px-3 py-1.5 align-top flex items-start gap-1" style={isSettlement ? { width: widths.item_name } : undefined}>
         {isEditable && (
           <>
@@ -241,22 +247,26 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
           )}
           {showCol('profit') && (
             <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${
+              isExcluded ? 'text-gray-400' :
               profit === null ? 'text-gray-300' :
               isMinus ? 'bg-red-50 text-red-600' :
               !isActualBased ? 'text-gray-400 italic' :
               'bg-green-50 text-green-600'
             }`} style={{ width: widths.profit }}>
-              {profit !== null ? (isMinus ? '' : '+') + profit.toLocaleString() : '-'}
+              {isExcluded
+                ? <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${item.settlement_type === '별도' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-600'}`}>{item.settlement_type}</span>
+                : profit !== null ? (isMinus ? '' : '+') + profit.toLocaleString() : '-'}
             </td>
           )}
           {showCol('profit_rate') && (
             <td className={`internal-only px-3 py-1.5 text-right text-xs font-semibold ${
+              isExcluded ? 'text-gray-400' :
               profitRate === null ? 'text-gray-300' :
               isMinus ? 'bg-red-50 text-red-600' :
               !isActualBased ? 'text-gray-400 italic' :
               'bg-green-50 text-green-600'
             }`} style={{ width: widths.profit_rate }}>
-              {profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
+              {isExcluded ? '—' : profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
             </td>
           )}
           {showCol('vat_included') && (
@@ -265,9 +275,27 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
                 type="checkbox"
                 title="체크 시 실행가에서 부가세 10% 제외(÷1.1)하고 이윤 계산"
                 checked={item.actual_vat_included}
-                disabled={!isEditable}
+                disabled={!isEditable || isExcluded}
                 onChange={e => upd(item.id, 'actual_vat_included', e.target.checked)}
               />
+            </td>
+          )}
+          {showCol('settlement_type') && (
+            <td className="internal-only px-3 py-1.5 text-center" style={{ width: widths.settlement_type }}>
+              {isEditable ? (
+                <select
+                  value={item.settlement_type}
+                  onChange={e => upd(item.id, 'settlement_type', e.target.value)}
+                  className="w-full text-xs border border-gray-200 rounded px-1 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400 bg-white"
+                >
+                  <option value="계약">계약</option>
+                  <option value="추가">추가</option>
+                  <option value="제외">제외</option>
+                  <option value="별도">별도</option>
+                </select>
+              ) : (
+                <span className="text-xs text-gray-600">{item.settlement_type}</span>
+              )}
             </td>
           )}
         </>
@@ -397,7 +425,7 @@ export default function QuoteDetailPage() {
           const bSo = b.sort_order ?? Infinity
           return aSo - bSo
         })
-        setItems(sorted.map(i => ({ ...i, actual_vat_included: i.actual_vat_included ?? true })))
+        setItems(sorted.map(i => ({ ...i, actual_vat_included: i.actual_vat_included ?? true, settlement_type: i.settlement_type ?? '계약' })))
       }
       setLoading(false)
     })
@@ -500,6 +528,7 @@ export default function QuoteDetailPage() {
             planned_execution_amount: item.planned_execution_amount,
             actual_execution_amount: item.actual_execution_amount,
             actual_vat_included: item.actual_vat_included,
+            settlement_type: item.settlement_type,
             execution_amount: effectiveExec,
             execution_date: item.execution_date || null,
           }).eq('id', item.id)
@@ -523,6 +552,7 @@ export default function QuoteDetailPage() {
         let totalAmount = 0, totalExpected = 0, totalEffective = 0
         const workTypeMap: Record<string, { amount: number; expected: number; effective: number; n: number; m: number; items: { name: string; miss: number }[] }> = {}
         for (const item of items) {
+          if (isExcludedFromProfit(item)) continue
           const wt = item.work_type
           if (!workTypeMap[wt]) workTypeMap[wt] = { amount: 0, expected: 0, effective: 0, n: 0, m: 0, items: [] }
           const e = workTypeMap[wt]
@@ -898,6 +928,20 @@ export default function QuoteDetailPage() {
                     <span className={settlementDone[wt] ? 'text-green-600 font-semibold' : 'text-gray-400'}>정산 완료</span>
                   </label>
                 )}
+                {isSettlement && isEditable && (() => {
+                  const allSeparate = gItems.length > 0 && gItems.every(i => i.settlement_type === '별도')
+                  return (
+                    <button
+                      onClick={() => {
+                        const ids = new Set(gItems.map(i => i.id))
+                        setItems(prev => prev.map(i => ids.has(i.id) ? { ...i, settlement_type: allSeparate ? '계약' : '별도' } : i))
+                      }}
+                      className="no-print text-xs text-gray-400 hover:text-purple-600 flex items-center gap-1"
+                      title="홈스타일링 등 외부 정산 공종을 일괄 별도 처리">
+                      {allSeparate ? '별도 해제' : '공종 전체 별도'}
+                    </button>
+                  )
+                })()}
                 {isEditable && (
                   <button onClick={() => addItem(wt)}
                     className={`no-print text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1${isSettlement ? '' : ' ml-auto'}`}>
@@ -1005,6 +1049,12 @@ export default function QuoteDetailPage() {
                               <ResizeHandle columnKey="vat_included" onMouseDown={startItemResize} />
                             </th>
                           )}
+                          {showCol('settlement_type') && (
+                            <th className="internal-only px-3 py-2 text-center text-xs font-semibold text-gray-500 relative" style={{ width: itemWidths.settlement_type }}>
+                              구분
+                              <ResizeHandle columnKey="settlement_type" onMouseDown={startItemResize} />
+                            </th>
+                          )}
                         </>
                       )}
                       {showCol('remark') && (
@@ -1033,16 +1083,17 @@ export default function QuoteDetailPage() {
                         />
                       ))}
                       {(() => {
-                        const groupQuote = gItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
-                        const groupPlanned = gItems.reduce((s, i) => {
+                        const profitGItems = gItems.filter(i => !isExcludedFromProfit(i))
+                        const groupQuote = profitGItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+                        const groupPlanned = profitGItems.reduce((s, i) => {
                           const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
                           return s + ((i.planned_execution_amount ?? 0) > 0
                             ? i.planned_execution_amount!
                             : (minProfitRate != null && qa > 0 ? Math.floor(qa * (1 - minProfitRate / 100)) : 0))
                         }, 0)
-                        const groupActual = gItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
-                        const groupCost = gItems.reduce((s, i) => s + actualCost(i), 0)
-                        const groupIsComplete = isGroupComplete(gItems)
+                        const groupActual = profitGItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+                        const groupCost = profitGItems.reduce((s, i) => s + actualCost(i), 0)
+                        const groupIsComplete = isGroupComplete(profitGItems)
                         const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupCost : null
                         const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
                         const leadingSpan = 1 + (['comment', 'unit', 'quantity'] as const).filter(k => showCol(k)).length
@@ -1053,13 +1104,13 @@ export default function QuoteDetailPage() {
                             {showCol('material_unit_price') && <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>}
                             {showCol('material_amount') && (
                               <td className="px-3 py-2 text-xs text-right text-blue-700 font-bold bg-blue-50/40">
-                                {fmt(gItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0))}
+                                {fmt(profitGItems.reduce((s, i) => s + i.material_unit_price * i.quantity, 0))}
                               </td>
                             )}
                             {showCol('labor_unit_price') && <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>}
                             {showCol('labor_amount') && (
                               <td className="px-3 py-2 text-xs text-right text-amber-700 font-bold bg-amber-50/40">
-                                {fmt(gItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0))}
+                                {fmt(profitGItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0))}
                               </td>
                             )}
                             {showCol('total_unit_price') && <td className="px-3 py-2 text-xs text-gray-400 text-right">-</td>}
@@ -1100,6 +1151,7 @@ export default function QuoteDetailPage() {
                                   </td>
                                 )}
                                 {showCol('vat_included') && <td className="internal-only px-3 py-2"></td>}
+                                {showCol('settlement_type') && <td className="internal-only px-3 py-2"></td>}
                               </>
                             )}
                             {trailingSpan > 0 && <td colSpan={trailingSpan}></td>}
