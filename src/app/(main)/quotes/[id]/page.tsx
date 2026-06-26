@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcFinalAmount, isGroupComplete, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, actualCost, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -34,6 +34,7 @@ const TOGGLEABLE_COLUMNS = [
   { key: 'actual_execution', label: '실제실행가' },
   { key: 'profit', label: '이윤' },
   { key: 'profit_rate', label: '이윤율' },
+  { key: 'vat_included', label: '부가세 제외' },
   { key: 'remark', label: '비고' },
 ]
 const COLUMN_VISIBILITY_KEY = 'romentor.quoteItemTable.settlement.visibleColumns'
@@ -42,7 +43,7 @@ const ITEM_DEFAULT_WIDTHS = {
   item_name: 180, comment: 150, unit: 50, quantity: 60,
   material_unit_price: 90, material_amount: 90, labor_unit_price: 90, labor_amount: 90,
   total_unit_price: 80, total_amount: 90, planned_execution: 100, execution_date: 110,
-  actual_execution: 100, profit: 80, profit_rate: 70, remark: 100, delete: 32,
+  actual_execution: 100, profit: 80, profit_rate: 70, vat_included: 60, remark: 100, delete: 32,
 }
 
 function autoResize(el: HTMLTextAreaElement) {
@@ -61,6 +62,7 @@ interface QuoteItem {
   labor_unit_price: number
   planned_execution_amount: number | null
   actual_execution_amount: number | null
+  actual_vat_included: boolean
   execution_amount: number | null
   execution_date: string | null
   execution_memo: string | null
@@ -98,7 +100,8 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
   const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
   const actual = item.actual_execution_amount
   const isActualBased = actual !== null && actual !== undefined
-  const profit: number | null = isActualBased && quoteAmt > 0 ? quoteAmt - actual! : null
+  const cost = actualCost(item)
+  const profit: number | null = isActualBased && quoteAmt > 0 ? quoteAmt - cost : null
   const profitRate: number | null = profit !== null && quoteAmt > 0 ? (profit / quoteAmt) * 100 : null
   const isMinus = profit !== null && profit < 0 && isActualBased
   const showCol = (key: string) => !isSettlement || visibleColumns[key] !== false
@@ -256,6 +259,17 @@ const SortableItemRow = React.memo(function SortableItemRow({ item, isEditable, 
               {profitRate !== null ? profitRate.toFixed(1) + '%' : '-'}
             </td>
           )}
+          {showCol('vat_included') && (
+            <td className="internal-only px-3 py-1.5 text-center" style={{ width: widths.vat_included }}>
+              <input
+                type="checkbox"
+                title="체크 시 실행가에서 부가세 10% 제외(÷1.1)하고 이윤 계산"
+                checked={item.actual_vat_included}
+                disabled={!isEditable}
+                onChange={e => upd(item.id, 'actual_vat_included', e.target.checked)}
+              />
+            </td>
+          )}
         </>
       )}
       {showCol('remark') && (
@@ -383,7 +397,7 @@ export default function QuoteDetailPage() {
           const bSo = b.sort_order ?? Infinity
           return aSo - bSo
         })
-        setItems(sorted)
+        setItems(sorted.map(i => ({ ...i, actual_vat_included: i.actual_vat_included ?? true })))
       }
       setLoading(false)
     })
@@ -485,6 +499,7 @@ export default function QuoteDetailPage() {
             sort_order: idx,
             planned_execution_amount: item.planned_execution_amount,
             actual_execution_amount: item.actual_execution_amount,
+            actual_vat_included: item.actual_vat_included,
             execution_amount: effectiveExec,
             execution_date: item.execution_date || null,
           }).eq('id', item.id)
@@ -519,7 +534,7 @@ export default function QuoteDetailPage() {
           const planned = (item.planned_execution_amount ?? 0) > 0
             ? item.planned_execution_amount!
             : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : 0)
-          const effective = hasActual ? item.actual_execution_amount! : 0
+          const effective = hasActual ? actualCost(item) : 0
           e.amount += qa
           e.expected += planned
           e.effective += effective
@@ -984,6 +999,12 @@ export default function QuoteDetailPage() {
                               <ResizeHandle columnKey="profit_rate" onMouseDown={startItemResize} />
                             </th>
                           )}
+                          {showCol('vat_included') && (
+                            <th className="internal-only px-3 py-2 text-center text-xs font-semibold text-gray-500 relative" style={{ width: itemWidths.vat_included }}>
+                              부가세 제외
+                              <ResizeHandle columnKey="vat_included" onMouseDown={startItemResize} />
+                            </th>
+                          )}
                         </>
                       )}
                       {showCol('remark') && (
@@ -1020,8 +1041,9 @@ export default function QuoteDetailPage() {
                             : (minProfitRate != null && qa > 0 ? Math.floor(qa * (1 - minProfitRate / 100)) : 0))
                         }, 0)
                         const groupActual = gItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+                        const groupCost = gItems.reduce((s, i) => s + actualCost(i), 0)
                         const groupIsComplete = isGroupComplete(gItems)
-                        const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupActual : null
+                        const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupCost : null
                         const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
                         const leadingSpan = 1 + (['comment', 'unit', 'quantity'] as const).filter(k => showCol(k)).length
                         const trailingSpan = (showCol('remark') ? 1 : 0) + (isEditable ? 1 : 0)
@@ -1077,6 +1099,7 @@ export default function QuoteDetailPage() {
                                     {groupProfitRate !== null ? groupProfitRate.toFixed(1) + '%' : '-'}
                                   </td>
                                 )}
+                                {showCol('vat_included') && <td className="internal-only px-3 py-2"></td>}
                               </>
                             )}
                             {trailingSpan > 0 && <td colSpan={trailingSpan}></td>}

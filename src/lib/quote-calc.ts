@@ -114,7 +114,18 @@ export interface QuoteSummaryItem {
   material_amount?: number
   labor_amount?: number
   actual_execution_amount?: number | null
+  actual_vat_included?: boolean | null
   planned_execution_amount?: number | null
+}
+
+// 이윤 계산용 실제 원가. 부가세 포함 입력이면 공급가(÷1.1)로 환산, 별도면 입력값 그대로.
+// 표시/raw 합계에는 쓰지 말 것 (입력 총액을 보여줘야 하는 곳은 actual_execution_amount 사용).
+export function actualCost(
+  i: { actual_execution_amount?: number | null; actual_vat_included?: boolean | null }
+): number {
+  const a = i.actual_execution_amount
+  if (a == null) return 0
+  return i.actual_vat_included ? Math.round(a / 1.1) : a
 }
 
 export interface QuoteSummary {
@@ -155,7 +166,7 @@ export function calcWorkTypeWarnings(
     const e = map[wt]
     e.amount += qa
     e.expected += minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa
-    e.effective += i.actual_execution_amount ?? 0
+    e.effective += actualCost(i)
   }
   const out: WorkTypeWarning[] = []
   for (const [workType, v] of Object.entries(map)) {
@@ -180,7 +191,7 @@ export function calcProjectedExec(
     const wt = i.work_type || '기타'
     if (!map[wt]) map[wt] = { actualSum: 0, plannedSum: 0 }
     const e = map[wt]
-    e.actualSum += i.actual_execution_amount ?? 0
+    e.actualSum += actualCost(i)
     e.plannedSum += (i.planned_execution_amount ?? 0) > 0
       ? i.planned_execution_amount!
       : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
@@ -210,7 +221,7 @@ export function calcQuoteSummary(
   const completedGroupItems = completedGroupsArr.flat()
   const progressRate = totalGroups > 0 ? (completedGroups / totalGroups) * 100 : 0
 
-  const currentExec = completedGroupItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+  const currentExec = completedGroupItems.reduce((s, i) => s + actualCost(i), 0)
   const currentQuoteSum = completedGroupItems.reduce(
     (s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0
   )

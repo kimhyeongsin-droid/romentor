@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
-import { calcFinalAmount, isGroupComplete } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, actualCost } from '@/lib/quote-calc'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
@@ -23,6 +23,7 @@ interface ItemForSummary {
   execution_amount?: number | null
   planned_execution_amount?: number | null
   actual_execution_amount?: number | null
+  actual_vat_included?: boolean | null
 }
 
 interface Props {
@@ -63,9 +64,10 @@ export default function QuoteSummaryTable({
     const lab  = wtItems.reduce((s, i) => s + i.labor_unit_price * i.quantity, 0)
     const total = mat + lab
     const actualExec = wtItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+    const actualCostSum = wtItems.reduce((s, i) => s + actualCost(i), 0)
     const plannedExec = wtItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
     const isComplete = isGroupComplete(wtItems)
-    const profit: number | null = (isComplete || actualExec > 0) ? total - actualExec : null
+    const profit: number | null = (isComplete || actualExec > 0) ? total - actualCostSum : null
     const profitRate: number | null = profit !== null && total > 0 ? (profit / total) * 100 : null
     return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, plannedExec, profit, profitRate, isComplete }
   })
@@ -99,10 +101,11 @@ export default function QuoteSummaryTable({
   const completedGroups = nonEmptyGroups.filter(g => isGroupComplete(g)).length
   const completedGroupItems = nonEmptyGroups.filter(g => isGroupComplete(g)).flat()
   const totalActualExec = completedGroupItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+  const totalActualCost = completedGroupItems.reduce((s, i) => s + actualCost(i), 0)
   const totalActualQuoteSum = completedGroupItems.reduce(
     (s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0
   )
-  const totalActualProfit = totalActualQuoteSum > 0 ? totalActualQuoteSum - totalActualExec : null
+  const totalActualProfit = totalActualQuoteSum > 0 ? totalActualQuoteSum - totalActualCost : null
   const totalActualProfitRate = totalActualProfit !== null && totalActualQuoteSum > 0
     ? (totalActualProfit / totalActualQuoteSum) * 100 : null
 
