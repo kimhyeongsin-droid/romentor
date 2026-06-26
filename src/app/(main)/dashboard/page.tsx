@@ -50,6 +50,7 @@ function formatDate(iso: string) {
 export default function DashboardPage() {
   const [rows, setRows] = useState<ProjectRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [smsModal, setSmsModal] = useState<SmsModal | null>(null)
   const [sending, setSending] = useState(false)
   const [smsError, setSmsError] = useState<string | null>(null)
@@ -58,11 +59,31 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       const sb = createClient()
-      const { data: quotes } = await sb
+
+      const { data: { user } } = await sb.auth.getUser()
+      if (!user) { setLoading(false); return }
+      const { data: prof } = await sb.from('profiles').select('role').eq('id', user.id).single()
+      const isAdmin = prof?.role === 'admin'
+      setIsAdmin(isAdmin)
+
+      let myProjectIds: string[] | null = null
+      if (!isAdmin) {
+        const { data: pa } = await sb.from('project_assignees').select('project_id').eq('user_id', user.id)
+        myProjectIds = (pa ?? []).map((r: any) => r.project_id)
+      }
+
+      let query = sb
         .from('quotes')
         .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included, settlement_type)')
         .eq('type', '정산')
         .order('updated_at', { ascending: false })
+
+      if (!isAdmin) {
+        if (!myProjectIds || myProjectIds.length === 0) { setRows([]); setLoading(false); return }
+        query = query.in('project_id', myProjectIds)
+      }
+
+      const { data: quotes } = await query
 
       if (!quotes) { setLoading(false); return }
 
@@ -201,7 +222,9 @@ export default function DashboardPage() {
         </div>
 
         {rows.length === 0 ? (
-          <p className="p-8 text-center text-gray-400 text-sm">진행 중인 프로젝트가 없습니다</p>
+          <p className="p-8 text-center text-gray-400 text-sm">
+            {isAdmin ? '진행 중인 프로젝트가 없습니다' : '배정된 현장이 없습니다. 관리자에게 문의하세요.'}
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
