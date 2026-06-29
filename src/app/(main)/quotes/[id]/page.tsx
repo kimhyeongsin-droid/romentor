@@ -550,11 +550,11 @@ export default function QuoteDetailPage() {
         }
 
         let totalAmount = 0, totalExpected = 0, totalEffective = 0
-        const workTypeMap: Record<string, { amount: number; expected: number; effective: number; n: number; m: number; latestExecDate: string | null; items: { name: string; miss: number }[] }> = {}
+        const workTypeMap: Record<string, { amount: number; expected: number; effective: number; plannedMissing: number; n: number; m: number; latestExecDate: string | null; items: { name: string; miss: number }[] }> = {}
         for (const item of items) {
           if (isExcludedFromProfit(item)) continue
           const wt = item.work_type
-          if (!workTypeMap[wt]) workTypeMap[wt] = { amount: 0, expected: 0, effective: 0, n: 0, m: 0, latestExecDate: null, items: [] }
+          if (!workTypeMap[wt]) workTypeMap[wt] = { amount: 0, expected: 0, effective: 0, plannedMissing: 0, n: 0, m: 0, latestExecDate: null, items: [] }
           const e = workTypeMap[wt]
           e.m += 1
           const hasActual = item.actual_execution_amount !== null && item.actual_execution_amount !== undefined
@@ -569,6 +569,7 @@ export default function QuoteDetailPage() {
           e.amount += qa
           e.expected += planned
           e.effective += effective
+          if (!hasActual) e.plannedMissing += planned
           e.items.push({ name: item.item_name, miss: effective - planned })
           totalAmount += qa
           totalExpected += planned
@@ -583,15 +584,26 @@ export default function QuoteDetailPage() {
           const nextState: Record<string, AlertState> = {}
 
           nextState['__TOTAL__'] = { tier: tierOf(totalEffective, totalExpected, totalAmount), profit: totalProfit, rate: totalRate }
-          const wtDetails: Record<string, { profit: number; rate: number; tier: AlertTier; latestExecDate: string | null }> = {}
+          const wtDetails: Record<string, { profit: number; rate: number; tier: AlertTier; latestExecDate: string | null; isProjected: boolean }> = {}
           for (const [wt, v] of Object.entries(workTypeMap)) {
             if (v.amount <= 0) continue
-            if (v.n !== v.m) continue // A방식: 정산 완료된 공종(모든 라인 actual 입력)만 경고 대상
-            const wtProfit = v.amount - v.effective
+            const complete = v.n === v.m
+            let eff: number
+            let tier: AlertTier
+            if (complete) {
+              tier = tierOf(v.effective, v.expected, v.amount)
+              if (tier === 'normal') continue
+              eff = v.effective
+            } else {
+              const projEff = v.effective + v.plannedMissing
+              tier = tierOf(projEff, v.expected, v.amount)
+              if (tier !== 'deficit') continue // 미완료는 적자(projection)만 경고
+              eff = projEff
+            }
+            const wtProfit = v.amount - eff
             const wtRate = (wtProfit / v.amount) * 100
-            const tier = tierOf(v.effective, v.expected, v.amount)
             nextState[wt] = { tier, profit: wtProfit, rate: wtRate }
-            wtDetails[wt] = { profit: wtProfit, rate: wtRate, tier, latestExecDate: v.latestExecDate }
+            wtDetails[wt] = { profit: wtProfit, rate: wtRate, tier, latestExecDate: v.latestExecDate, isProjected: !complete }
           }
 
           const totalShouldSend = decideAlert(nextState['__TOTAL__'], prevState['__TOTAL__'])
@@ -636,6 +648,7 @@ export default function QuoteDetailPage() {
                   rate: wtDetails[wt].rate,
                   tier: wtDetails[wt].tier,
                   latestExecDate: wtDetails[wt].latestExecDate,
+                  isProjected: wtDetails[wt].isProjected,
                 })),
               }),
             })

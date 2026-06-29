@@ -221,6 +221,7 @@ export default function DashboardPage() {
             rate: w.rate,
             tier: w.tier,
             latestExecDate: w.latestExecDate ?? null,
+            isProjected: w.isProjected,
           })),
         }),
       })

@@ -119,7 +119,7 @@ export async function POST(req: Request) {
       totalBlock = `\n▣ 전체 이윤율\n 현재 ${cur} / 예상 ${proj.toFixed(1)}% (진행 ${completed}/${total})\n`
     }
 
-    const warnItems = (payloadItems as { name: string; rate: number; tier: string; latestExecDate?: string | null }[]) ?? []
+    const warnItems = (payloadItems as { name: string; rate: number; tier: string; latestExecDate?: string | null; isProjected?: boolean }[]) ?? []
     const sorted = [...warnItems].sort((a, b) => {
       const da = a.latestExecDate ?? '', db = b.latestExecDate ?? ''
       if (!da && !db) return 0
@@ -133,7 +133,9 @@ export async function POST(req: Request) {
       const top = sorted.slice(0, 3)
       const rest = sorted.length - top.length
       const lines = top.map(i => {
-        const label = i.tier === 'deficit' ? '[적자]' : '[미달]'
+        const label = i.tier === 'deficit'
+          ? (i.isProjected ? '[적자 예상]' : '[적자]')
+          : '[미달]'
         return ` • ${label} ${i.name} ${Number(i.rate).toFixed(1)}%`
       })
       warnBlock = '\n' + lines.join('\n') + (rest > 0 ? `\n 외 ${rest}건` : '') + '\n'

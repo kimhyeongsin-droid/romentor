@@ -158,20 +158,23 @@ export interface WorkTypeWarning {
   profit: number
   rate: number
   latestExecDate?: string | null
+  isProjected: boolean
 }
 
-// A방식: 정산 완료된 공종(모든 라인 actual 입력)만 경고 대상. 미완료 공종은 부분입력 허수를 내므로 제외.
-// effective는 actualCost 합, expected는 목표 이윤율 기반(라인 견적금액 × (1 - rate)) 합. normal 공종은 제외.
-// latestExecDate = 그 공종 라인들의 execution_date 최대값(없으면 null) — 문구 정렬용.
+// 하이브리드 경고:
+// - 완료 공종(isGroupComplete): effective=ΣactualCost(실입력)로 tierOf → below_target/deficit 둘 다 경고(isProjected:false).
+// - 미완료 공종: projEffective=ΣactualCost + Σ(미입력 라인 목표실행가)로 tierOf → deficit일 때만 경고(isProjected:true).
+//   미입력 라인 목표실행가 = planned_execution_amount>0 ? planned : floor(qa*(1-min/100)) (calcProjectedExec와 동일).
+// expected(tierOf 경계)는 목표 이윤율 기반 합 그대로. latestExecDate = 공종 라인 execution_date 최대값.
 export function calcWorkTypeWarnings(
   items: QuoteSummaryItem[],
   minProfitRate: number | null | undefined
 ): WorkTypeWarning[] {
-  const map: Record<string, { amount: number; expected: number; effective: number; items: QuoteSummaryItem[] }> = {}
+  const map: Record<string, { amount: number; expected: number; effective: number; plannedMissing: number; items: QuoteSummaryItem[] }> = {}
   for (const i of items) {
     if (isExcludedFromProfit(i)) continue
     const wt = i.work_type || '기타'
-    if (!map[wt]) map[wt] = { amount: 0, expected: 0, effective: 0, items: [] }
+    if (!map[wt]) map[wt] = { amount: 0, expected: 0, effective: 0, plannedMissing: 0, items: [] }
     const e = map[wt]
     e.items.push(i)
     const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
@@ -179,20 +182,36 @@ export function calcWorkTypeWarnings(
     e.amount += qa
     e.expected += minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa
     e.effective += actualCost(i)
+    const hasActual = i.actual_execution_amount != null
+    if (!hasActual) {
+      e.plannedMissing += (i.planned_execution_amount ?? 0) > 0
+        ? i.planned_execution_amount!
+        : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
+    }
   }
   const out: WorkTypeWarning[] = []
   for (const [workType, v] of Object.entries(map)) {
-    if (!isGroupComplete(v.items)) continue
     if (v.amount <= 0) continue
-    const tier = tierOf(v.effective, v.expected, v.amount)
-    if (tier === 'normal') continue
-    const profit = v.amount - v.effective
+    const complete = isGroupComplete(v.items)
+    let eff: number
+    let tier: 'below_target' | 'deficit'
+    if (complete) {
+      const t = tierOf(v.effective, v.expected, v.amount)
+      if (t === 'normal') continue
+      tier = t; eff = v.effective
+    } else {
+      const projEff = v.effective + v.plannedMissing
+      const t = tierOf(projEff, v.expected, v.amount)
+      if (t !== 'deficit') continue // 미완료는 적자(projection)만 경고
+      tier = t; eff = projEff
+    }
+    const profit = v.amount - eff
     const latestExecDate = v.items.reduce<string | null>((max, it) => {
       const d = it.execution_date ?? null
       if (!d) return max
       return max == null || d > max ? d : max
     }, null)
-    out.push({ workType, tier, amount: v.amount, effective: v.effective, profit, rate: (profit / v.amount) * 100, latestExecDate })
+    out.push({ workType, tier, amount: v.amount, effective: eff, profit, rate: (profit / v.amount) * 100, latestExecDate, isProjected: !complete })
   }
   return out
 }
