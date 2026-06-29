@@ -43,6 +43,10 @@ export async function POST(req: Request) {
     totalProfit: payloadTotalProfit,
     totalProfitRate: payloadTotalProfitRate,
     minProfitRate: payloadMinProfitRate,
+    projectedProfitRate: payloadProjectedProfitRate,
+    currentProfitRate: payloadCurrentProfitRate,
+    completedGroups: payloadCompletedGroups,
+    totalGroups: payloadTotalGroups,
   } = await req.json()
   const sb = await createClient()
 
@@ -98,19 +102,49 @@ export async function POST(req: Request) {
     const designerPhones = getPhones(project.designers, project.designer_phone)
     const sitePhones = getPhones(project.site_managers, project.site_manager_phone)
     phones = [...new Set([...pmPhones, ...designerPhones, ...sitePhones])]
-    const itemLines = (payloadItems as { name: string; profit: number; rate: number; tier: string; target: number; causes?: string[]; n?: number; m?: number }[])
-      .map(i => {
-        const causeStr = i.causes && i.causes.length ? `\n  주요 원인: ${i.causes.join(', ')}` : ''
-        const progStr = typeof i.n === 'number' && typeof i.m === 'number'
-          ? ` · 실입력 ${i.n}/${i.m}${i.n < i.m ? ' (진행 중)' : ''}`
-          : ''
-        if (i.tier === 'deficit') {
-          return `⚠️ 마이너스 공정 발생 — ${i.name}: 이윤 ${Number(i.profit).toLocaleString()}원 (이윤율 ${i.rate.toFixed(1)}%)${progStr}${causeStr}`
-        }
-        return `⚠️ 목표 이윤율 미달 — ${i.name}: 이윤율 ${i.rate.toFixed(1)}% (목표 ${i.target}%)${progStr}${causeStr}`
+
+    const proj = Number(payloadProjectedProfitRate ?? 0)
+    const min: number | null = payloadMinProfitRate ?? null
+    const completed = Number(payloadCompletedGroups ?? 0)
+    const total = Number(payloadTotalGroups ?? 0)
+    const cur: string = payloadCurrentProfitRate != null ? `${Number(payloadCurrentProfitRate).toFixed(1)}%` : '집계 전'
+    const isDeficit = proj < 0
+    const header = isDeficit ? '[로멘토] ⚠️ 이윤 경고' : '[로멘토] 이윤 경고'
+
+    let totalBlock: string
+    if (min != null) {
+      const statusLine = proj >= min ? '✓ 목표 달성 중' : `▼ ${(min - proj).toFixed(1)}%p 미달`
+      totalBlock = `\n▣ 전체 이윤율\n 목표 ${min}%\n 현재 ${cur} / 예상 ${proj.toFixed(1)}%\n ${statusLine} (진행 ${completed}/${total})\n`
+    } else {
+      totalBlock = `\n▣ 전체 이윤율\n 현재 ${cur} / 예상 ${proj.toFixed(1)}% (진행 ${completed}/${total})\n`
+    }
+
+    const warnItems = (payloadItems as { name: string; rate: number; tier: string; latestExecDate?: string | null }[]) ?? []
+    const sorted = [...warnItems].sort((a, b) => {
+      const da = a.latestExecDate ?? '', db = b.latestExecDate ?? ''
+      if (!da && !db) return 0
+      if (!da) return 1
+      if (!db) return -1
+      return db.localeCompare(da)
+    })
+
+    let warnBlock: string
+    if (sorted.length > 0) {
+      const top = sorted.slice(0, 3)
+      const rest = sorted.length - top.length
+      const lines = top.map(i => {
+        const label = i.tier === 'deficit' ? '[적자]' : '[미달]'
+        return ` • ${label} ${i.name} ${Number(i.rate).toFixed(1)}%`
       })
-      .join('\n')
-    message = `[로멘토]\n현장: ${project.name}\n${itemLines}\n확인 후 조치 바랍니다.`
+      warnBlock = '\n' + lines.join('\n') + (rest > 0 ? `\n 외 ${rest}건` : '') + '\n'
+    } else {
+      const belowTarget = min != null && proj < min
+      warnBlock = (isDeficit || belowTarget)
+        ? `\n※ 완료된 공종은 모두 정상.\n   미입력 공종 정산 시 확인 필요.\n`
+        : ''
+    }
+
+    message = `${header}\n현장: ${project.name}\n${totalBlock}${warnBlock}\n확인 후 조치 바랍니다.`
   }
 
   if (!phones.length) return NextResponse.json({ ok: false, error: '수신 번호가 없습니다.' })

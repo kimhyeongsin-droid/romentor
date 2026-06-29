@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
+import { calcFinalAmount, calcQuoteSummary, isGroupComplete, actualCost, isExcludedFromProfit, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -550,15 +550,16 @@ export default function QuoteDetailPage() {
         }
 
         let totalAmount = 0, totalExpected = 0, totalEffective = 0
-        const workTypeMap: Record<string, { amount: number; expected: number; effective: number; n: number; m: number; items: { name: string; miss: number }[] }> = {}
+        const workTypeMap: Record<string, { amount: number; expected: number; effective: number; n: number; m: number; latestExecDate: string | null; items: { name: string; miss: number }[] }> = {}
         for (const item of items) {
           if (isExcludedFromProfit(item)) continue
           const wt = item.work_type
-          if (!workTypeMap[wt]) workTypeMap[wt] = { amount: 0, expected: 0, effective: 0, n: 0, m: 0, items: [] }
+          if (!workTypeMap[wt]) workTypeMap[wt] = { amount: 0, expected: 0, effective: 0, n: 0, m: 0, latestExecDate: null, items: [] }
           const e = workTypeMap[wt]
           e.m += 1
           const hasActual = item.actual_execution_amount !== null && item.actual_execution_amount !== undefined
           if (hasActual) e.n += 1
+          if (item.execution_date && (e.latestExecDate == null || item.execution_date > e.latestExecDate)) e.latestExecDate = item.execution_date
           const qa = (item.material_unit_price + item.labor_unit_price) * item.quantity
           if (qa <= 0) continue
           const planned = (item.planned_execution_amount ?? 0) > 0
@@ -577,25 +578,20 @@ export default function QuoteDetailPage() {
         if (totalAmount > 0) {
           const totalProfit = totalAmount - totalEffective
           const totalRate = (totalProfit / totalAmount) * 100
-          const targetRate = minProfitRate ?? 15
 
           const prevState: Record<string, AlertState> = (quote?.sms_alert_state as Record<string, AlertState> | null) ?? {}
           const nextState: Record<string, AlertState> = {}
 
           nextState['__TOTAL__'] = { tier: tierOf(totalEffective, totalExpected, totalAmount), profit: totalProfit, rate: totalRate }
-          const wtDetails: Record<string, { profit: number; rate: number; tier: AlertTier; causes: string[]; n: number; m: number }> = {}
+          const wtDetails: Record<string, { profit: number; rate: number; tier: AlertTier; latestExecDate: string | null }> = {}
           for (const [wt, v] of Object.entries(workTypeMap)) {
             if (v.amount <= 0) continue
+            if (v.n !== v.m) continue // A방식: 정산 완료된 공종(모든 라인 actual 입력)만 경고 대상
             const wtProfit = v.amount - v.effective
             const wtRate = (wtProfit / v.amount) * 100
             const tier = tierOf(v.effective, v.expected, v.amount)
             nextState[wt] = { tier, profit: wtProfit, rate: wtRate }
-            const causes = v.items
-              .filter(it => it.miss > 0)
-              .sort((a, b) => b.miss - a.miss)
-              .slice(0, 2)
-              .map(it => it.name)
-            wtDetails[wt] = { profit: wtProfit, rate: wtRate, tier, causes, n: v.n, m: v.m }
+            wtDetails[wt] = { profit: wtProfit, rate: wtRate, tier, latestExecDate: v.latestExecDate }
           }
 
           const totalShouldSend = decideAlert(nextState['__TOTAL__'], prevState['__TOTAL__'])
@@ -622,21 +618,24 @@ export default function QuoteDetailPage() {
           }
 
           if (escalatedWts.length > 0) {
+            // 전체현황은 대시보드와 동일한 projection 사용 (calcQuoteSummary 내부 calcProjectedExec 기반)
+            const summary = calcQuoteSummary(items, rates, discount, minProfitRate, true)
             await fetch('/api/sms', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 quoteId: id,
                 type: 'item_minus',
+                minProfitRate,
+                projectedProfitRate: summary.projectedProfitRate,
+                currentProfitRate: summary.currentProfitRate,
+                completedGroups: summary.completedGroups,
+                totalGroups: summary.totalGroups,
                 items: escalatedWts.map(wt => ({
                   name: wt,
-                  profit: wtDetails[wt].profit,
                   rate: wtDetails[wt].rate,
                   tier: wtDetails[wt].tier,
-                  target: targetRate,
-                  causes: wtDetails[wt].causes,
-                  n: wtDetails[wt].n,
-                  m: wtDetails[wt].m,
+                  latestExecDate: wtDetails[wt].latestExecDate,
                 })),
               }),
             })

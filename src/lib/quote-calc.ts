@@ -118,6 +118,7 @@ export interface QuoteSummaryItem {
   actual_vat_included?: boolean | null
   planned_execution_amount?: number | null
   settlement_type?: string | null
+  execution_date?: string | null
 }
 
 // 이윤 계산용 실제 원가. 부가세 포함 입력이면 공급가(÷1.1)로 환산, 별도면 입력값 그대로.
@@ -156,32 +157,42 @@ export interface WorkTypeWarning {
   effective: number
   profit: number
   rate: number
+  latestExecDate?: string | null
 }
 
-// 공종별 합계로 tier 판정. effective는 실제 입력된 actual만 합산(미입력 라인=0, 부분 입력 실시간 반영).
-// expected는 목표 이윤율 기반(라인 견적금액 × (1 - rate)) 합. normal 공종은 제외하고 반환.
+// A방식: 정산 완료된 공종(모든 라인 actual 입력)만 경고 대상. 미완료 공종은 부분입력 허수를 내므로 제외.
+// effective는 actualCost 합, expected는 목표 이윤율 기반(라인 견적금액 × (1 - rate)) 합. normal 공종은 제외.
+// latestExecDate = 그 공종 라인들의 execution_date 최대값(없으면 null) — 문구 정렬용.
 export function calcWorkTypeWarnings(
   items: QuoteSummaryItem[],
   minProfitRate: number | null | undefined
 ): WorkTypeWarning[] {
-  const map: Record<string, { amount: number; expected: number; effective: number }> = {}
+  const map: Record<string, { amount: number; expected: number; effective: number; items: QuoteSummaryItem[] }> = {}
   for (const i of items) {
     if (isExcludedFromProfit(i)) continue
+    const wt = i.work_type || '기타'
+    if (!map[wt]) map[wt] = { amount: 0, expected: 0, effective: 0, items: [] }
+    const e = map[wt]
+    e.items.push(i)
     const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
     if (qa <= 0) continue
-    const wt = i.work_type || '기타'
-    if (!map[wt]) map[wt] = { amount: 0, expected: 0, effective: 0 }
-    const e = map[wt]
     e.amount += qa
     e.expected += minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa
     e.effective += actualCost(i)
   }
   const out: WorkTypeWarning[] = []
   for (const [workType, v] of Object.entries(map)) {
+    if (!isGroupComplete(v.items)) continue
+    if (v.amount <= 0) continue
     const tier = tierOf(v.effective, v.expected, v.amount)
     if (tier === 'normal') continue
     const profit = v.amount - v.effective
-    out.push({ workType, tier, amount: v.amount, effective: v.effective, profit, rate: (profit / v.amount) * 100 })
+    const latestExecDate = v.items.reduce<string | null>((max, it) => {
+      const d = it.execution_date ?? null
+      if (!d) return max
+      return max == null || d > max ? d : max
+    }, null)
+    out.push({ workType, tier, amount: v.amount, effective: v.effective, profit, rate: (profit / v.amount) * 100, latestExecDate })
   }
   return out
 }

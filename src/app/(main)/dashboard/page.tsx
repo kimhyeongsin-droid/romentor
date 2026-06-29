@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, calcProjectedExec, type WorkTypeWarning } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, calcProjectedExec, actualCost, isExcludedFromProfit, type WorkTypeWarning } from '@/lib/quote-calc'
 import { DEFAULT_RATES } from '@/lib/quoteConstants'
 
 interface QuoteItem {
@@ -16,6 +16,7 @@ interface QuoteItem {
   actual_execution_amount: number | null
   actual_vat_included: boolean | null
   settlement_type: string | null
+  execution_date: string | null
 }
 
 interface ProjectRow {
@@ -30,6 +31,7 @@ interface ProjectRow {
   completedGroups: number
   projectedProfit: number
   projectedProfitRate: number
+  currentProfitRate: number | null
   minProfitRate: number | null
   warnings: WorkTypeWarning[]
 }
@@ -38,6 +40,10 @@ interface SmsModal {
   quoteId: string
   projectName: string
   minProfitRate: number | null
+  projectedProfitRate: number
+  currentProfitRate: number | null
+  completedGroups: number
+  totalGroups: number
   items: WorkTypeWarning[]
 }
 
@@ -74,7 +80,7 @@ export default function DashboardPage() {
 
       let query = sb
         .from('quotes')
-        .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included, settlement_type)')
+        .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included, settlement_type, execution_date)')
         .eq('type', '정산')
         .order('updated_at', { ascending: false })
 
@@ -127,6 +133,18 @@ export default function DashboardPage() {
         const projectedProfit = directQuote - calcProjectedExec(items, minProfitRate)
         const projectedProfitRate = directQuote > 0 ? (projectedProfit / directQuote) * 100 : 0
 
+        // 현재이윤율: 완료 공종(별도/제외 제외)만의 실적 — calcQuoteSummary.currentProfitRate와 동일 정의
+        const profitItems = items.filter(i => !isExcludedFromProfit(i))
+        const cGrouped = profitItems.reduce((acc, i) => {
+          const wt = i.work_type || '기타'
+          ;(acc[wt] ??= []).push(i)
+          return acc
+        }, {} as Record<string, QuoteItem[]>)
+        const completedItems = Object.values(cGrouped).filter(g => g.length > 0 && isGroupComplete(g)).flat()
+        const curQuoteSum = completedItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+        const curExec = completedItems.reduce((s, i) => s + actualCost(i), 0)
+        const currentProfitRate: number | null = curQuoteSum > 0 ? ((curQuoteSum - curExec) / curQuoteSum) * 100 : null
+
         // 공종별 경고: 마이너스(적자) + 목표미달 (actual만 합산, 부분 입력 실시간 반영)
         const warnings = calcWorkTypeWarnings(items, minProfitRate)
 
@@ -142,6 +160,7 @@ export default function DashboardPage() {
           completedGroups,
           projectedProfit,
           projectedProfitRate,
+          currentProfitRate,
           minProfitRate,
           warnings,
         }
@@ -163,7 +182,16 @@ export default function DashboardPage() {
 
   function openModal(row: ProjectRow) {
     setSmsError(null)
-    setSmsModal({ quoteId: row.quoteId, projectName: row.projectName, minProfitRate: row.minProfitRate, items: row.warnings })
+    setSmsModal({
+      quoteId: row.quoteId,
+      projectName: row.projectName,
+      minProfitRate: row.minProfitRate,
+      projectedProfitRate: row.projectedProfitRate,
+      currentProfitRate: row.currentProfitRate,
+      completedGroups: row.completedGroups,
+      totalGroups: row.totalGroups,
+      items: row.warnings,
+    })
   }
 
   function closeModal() {
@@ -183,12 +211,16 @@ export default function DashboardPage() {
         body: JSON.stringify({
           type: 'item_minus',
           quoteId: smsModal.quoteId,
+          minProfitRate: smsModal.minProfitRate,
+          projectedProfitRate: smsModal.projectedProfitRate,
+          currentProfitRate: smsModal.currentProfitRate,
+          completedGroups: smsModal.completedGroups,
+          totalGroups: smsModal.totalGroups,
           items: smsModal.items.map(w => ({
             name: w.workType,
-            profit: w.profit,
             rate: w.rate,
             tier: w.tier,
-            target: smsModal.minProfitRate ?? 0,
+            latestExecDate: w.latestExecDate ?? null,
           })),
         }),
       })
@@ -278,11 +310,13 @@ export default function DashboardPage() {
                           <span className={`font-semibold ${row.projectedProfit < 0 ? 'text-red-600' : 'text-gray-900'} tabular-nums`}>
                             {fmt(row.projectedProfit)}원
                           </span>
-                          <span className={`text-xs ml-1.5 font-medium ${
-                            belowTarget ? 'text-red-600' : achievingTarget ? 'text-green-600' :
-                            row.projectedProfitRate < 0 ? 'text-red-400' : 'text-gray-400'
-                          }`}>
-                            ({row.projectedProfitRate.toFixed(1)}%)
+                          <span className="text-xs ml-1.5">
+                            <span className="text-gray-500">현재 {row.currentProfitRate != null ? `${row.currentProfitRate.toFixed(1)}%` : '집계 전'}</span>
+                            <span className="text-gray-400"> / 예상 </span>
+                            <span className={`font-medium ${
+                              belowTarget ? 'text-red-600' : achievingTarget ? 'text-green-600' :
+                              row.projectedProfitRate < 0 ? 'text-red-400' : 'text-gray-400'
+                            }`}>{row.projectedProfitRate.toFixed(1)}%</span>
                           </span>
                         </div>
                         {belowTarget && (
