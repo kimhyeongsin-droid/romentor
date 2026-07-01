@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
-import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit, workTypeEffectiveCost } from '@/lib/quote-calc'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
@@ -48,7 +48,7 @@ const fmt = (n: number) => n.toLocaleString()
 
 const SUMMARY_DEFAULT_WIDTHS = {
   number: 50, name: 200, material_amount: 110, labor_amount: 110, total_amount: 110,
-  execution_amount: 110, profit: 100, profit_rate: 80, memo: 150,
+  execution_amount: 110, cost_amount: 100, profit: 100, profit_rate: 80, memo: 150,
 }
 
 export default function QuoteSummaryTable({
@@ -69,9 +69,11 @@ export default function QuoteSummaryTable({
     const actualCostSum = wtItems.reduce((s, i) => s + actualCost(i), 0)
     const plannedExec = wtItems.reduce((s, i) => s + (i.planned_execution_amount ?? 0), 0)
     const isComplete = isGroupComplete(wtItems)
-    const profit: number | null = (isComplete || actualExec > 0) ? total - actualCostSum : null
+    const effectiveCost = isComplete ? actualCostSum : workTypeEffectiveCost(wtItems, minProfitRate)
+    const profit: number | null = (isComplete || actualExec > 0) ? total - effectiveCost : null
     const profitRate: number | null = profit !== null && total > 0 ? (profit / total) * 100 : null
-    return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, plannedExec, profit, profitRate, isComplete }
+    const isParadox = isComplete && actualExec > total && profit !== null && profit > 0
+    return { wt, materialTotal: mat, laborTotal: lab, total, actualExec, actualCostSum, plannedExec, profit, profitRate, isComplete, isParadox }
   })
 
   const directMaterial = summaryRows.reduce((s, r) => s + r.materialTotal, 0)
@@ -114,7 +116,7 @@ export default function QuoteSummaryTable({
     ? (totalActualProfit / totalActualQuoteSum) * 100 : null
 
   // 계약 모드: 9컬럼 (기본5 + 실행금액/이윤/이윤율/메모), 일반: 5컬럼
-  const totalCols = isContract ? 9 : 5
+  const totalCols = isContract ? 10 : 5
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-6 overflow-hidden">
@@ -178,6 +180,10 @@ export default function QuoteSummaryTable({
                       실행금액
                       <ResizeHandle columnKey="execution_amount" onMouseDown={startSummaryResize} />
                     </th>
+                    <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold relative" style={{ width: summaryWidths.cost_amount }}>
+                      원가
+                      <ResizeHandle columnKey="cost_amount" onMouseDown={startSummaryResize} />
+                    </th>
                     <th className="internal-only px-4 py-2.5 text-right text-xs font-semibold relative" style={{ width: summaryWidths.profit }}>
                       이윤
                       <ResizeHandle columnKey="profit" onMouseDown={startSummaryResize} />
@@ -204,7 +210,10 @@ export default function QuoteSummaryTable({
                 <tr key={row.wt} className="hover:bg-blue-50 transition-colors">
                   <td className="px-4 py-2 text-xs text-gray-400 text-center">{idx + 1}</td>
                   <td className="px-4 py-2">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${(WORK_TYPE_COLOR as Record<string, string>)[row.wt] ?? 'bg-gray-100 text-gray-600'}`}>{row.wt}</span>
+                    <span
+                      onClick={() => document.getElementById(`worktype-${row.wt}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      title="이 공종 상세로 이동"
+                      className={`cursor-pointer hover:underline text-xs px-2 py-0.5 rounded-full font-semibold ${(WORK_TYPE_COLOR as Record<string, string>)[row.wt] ?? 'bg-gray-100 text-gray-600'}`}>{row.wt}</span>
                   </td>
                   <td className="px-4 py-2 text-xs text-blue-700 text-right">{fmt(row.materialTotal)}</td>
                   <td className="px-4 py-2 text-xs text-amber-700 text-right">{fmt(row.laborTotal)}</td>
@@ -217,6 +226,14 @@ export default function QuoteSummaryTable({
                           : 'text-gray-300'
                       }`}>
                         {row.isComplete || row.actualExec > 0 ? fmt(row.actualExec) : '-'}
+                        {row.isParadox && (
+                          <span className="ml-1 inline-block px-1 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold align-top" title="실행금액(부가세 포함)이 견적보다 크지만 부가세 제외 원가 기준으로 이윤이 발생한 행입니다. 원가 칼럼을 참고하세요.">ⓥ</span>
+                        )}
+                      </td>
+                      <td className={`internal-only px-4 py-2 text-xs text-right ${
+                        row.isComplete || row.actualExec > 0 ? (row.isComplete ? 'text-gray-600' : 'text-gray-400 italic') : 'text-gray-300'
+                      }`}>
+                        {row.isComplete || row.actualExec > 0 ? fmt(row.actualCostSum) : '-'}
                       </td>
                       <td className={`internal-only px-4 py-2 text-xs font-semibold text-right ${
                         row.profit === null ? 'text-gray-300' :
@@ -260,6 +277,9 @@ export default function QuoteSummaryTable({
                   <>
                     <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${completedGroups > 0 ? 'text-red-600' : 'text-gray-300'}`}>
                       {completedGroups > 0 ? fmt(totalActualExec) : '-'}
+                    </td>
+                    <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${completedGroups > 0 ? 'text-gray-600' : 'text-gray-300'}`}>
+                      {completedGroups > 0 ? fmt(totalActualCost) : '-'}
                     </td>
                     <td className={`internal-only px-4 py-2.5 text-xs font-bold text-right ${
                       totalActualProfit === null ? 'text-gray-300' :
@@ -309,6 +329,7 @@ export default function QuoteSummaryTable({
                       <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                       <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                       <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
+                      <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     </>
                   )}
                 </tr>
@@ -320,6 +341,7 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-2.5 text-xs text-gray-900 font-bold text-right">{fmt(indirectTotal)}</td>
                 {isContract && (
                   <>
+                    <td className="internal-only px-4 py-2.5"></td>
                     <td className="internal-only px-4 py-2.5"></td>
                     <td className="internal-only px-4 py-2.5"></td>
                     <td className="internal-only px-4 py-2.5"></td>
@@ -346,6 +368,7 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-2 text-xs text-gray-700 font-medium text-right">{fmt(vat)}</td>
                 {isContract && (
                   <>
+                    <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
@@ -391,6 +414,7 @@ export default function QuoteSummaryTable({
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                     <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
+                    <td className="internal-only px-4 py-2 text-xs text-gray-200 text-right">-</td>
                   </>
                 )}
               </tr>
@@ -399,12 +423,12 @@ export default function QuoteSummaryTable({
               {isContract && completedGroups > 0 && (
                 <>
                   <tr className={`internal-only ${totalActualProfit !== null && totalActualProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                    <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">현재까지 실행금액 합계</td>
+                    <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">현재까지 실행금액 합계</td>
                     <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalActualExec)} 원</td>
                   </tr>
                   {totalActualProfit !== null && (
                     <tr className={`internal-only ${totalActualProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
-                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
+                      <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">
                         현재까지 이윤 (확정분 · {completedGroups}/{totalGroups} 공종){totalActualProfit < 0 ? ' ⚠️ 마이너스!' : ''}
                         {totalActualProfitRate !== null && (
                           <span className={`ml-2 font-normal ${totalActualProfitRate < 0 ? 'text-red-500' : 'text-green-600'}`}>
@@ -419,7 +443,7 @@ export default function QuoteSummaryTable({
                   )}
                   {minProfitRate != null && totalActualProfitRate !== null && (
                     <tr className={`internal-only ${totalActualProfitRate >= minProfitRate ? 'bg-green-50' : 'bg-red-50'}`}>
-                      <td colSpan={8} className="px-4 py-2.5 text-xs font-bold">
+                      <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">
                         목표 이윤율 {totalActualProfitRate >= minProfitRate ? '✓ 달성' : '✗ 미달'}
                       </td>
                       <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfitRate >= minProfitRate ? 'text-green-700' : 'text-red-700'}`}>
@@ -436,6 +460,7 @@ export default function QuoteSummaryTable({
                 <td className="px-4 py-3.5 text-sm font-bold text-white text-right">{fmt(finalTotal)} 원</td>
                 {isContract && (
                   <>
+                    <td className="internal-only px-4 py-3.5"></td>
                     <td className="internal-only px-4 py-3.5"></td>
                     <td className="internal-only px-4 py-3.5"></td>
                     <td className="internal-only px-4 py-3.5"></td>

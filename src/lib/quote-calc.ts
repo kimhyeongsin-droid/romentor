@@ -216,32 +216,46 @@ export function calcWorkTypeWarnings(
   return out
 }
 
-// 공정(work_type) 단위 lump-safe projection.
-// - 완료 공종(모든 항목 실입력): 실제원가합 그대로 반영 → 목표 초과분도 그대로 드러남.
-// - 미완료 공종: MAX(실제입력합, 목표실행가합) — 일부만 입력된 공종이 비용 0 취급으로 이윤을 부풀리는 것 방지.
-// 목표실행가(라인) = planned_execution_amount>0 ? planned : floor(qa*(1-rate)). qa<=0 라인은 0 기여.
+// 공종(work_type) 하나의 lump-safe effective 원가.
+// - 완료 공종(모든 항목 실입력): Σ actualCost(실입력) → 목표 초과분도 그대로 드러남.
+// - 미완료 공종: Σ actualCost(실입력) + Σ 미입력라인 예상실행가 — 통금액을 한 항목에 몰아 입력해도
+//   실제 지출이 그대로 반영되어 적자를 가리지 않는다.
+// 예상실행가(라인) = planned_execution_amount>0 ? planned : (min있으면 floor(qa*(1-min/100)), 없으면 qa). qa<=0 라인은 0 기여.
+// calcWorkTypeWarnings의 미완료 판정(v.effective + v.plannedMissing)과 동일 계산.
+export function workTypeEffectiveCost(
+  items: QuoteSummaryItem[],
+  minProfitRate: number | null | undefined
+): number {
+  const included = items.filter(i => !isExcludedFromProfit(i))
+  const complete = isGroupComplete(included)
+  let effective = 0
+  let plannedMissing = 0
+  for (const i of included) {
+    const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
+    if (qa <= 0) continue
+    effective += actualCost(i)
+    if (i.actual_execution_amount == null) {
+      plannedMissing += (i.planned_execution_amount ?? 0) > 0
+        ? i.planned_execution_amount!
+        : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
+    }
+  }
+  return complete ? effective : effective + plannedMissing
+}
+
+// 공정(work_type) 단위 lump-safe projection. 공종별 effective 원가(workTypeEffectiveCost)의 합.
 export function calcProjectedExec(
   items: QuoteSummaryItem[],
   minProfitRate: number | null | undefined
 ): number {
-  const map: Record<string, { actualSum: number; plannedSum: number; items: QuoteSummaryItem[] }> = {}
+  const map: Record<string, QuoteSummaryItem[]> = {}
   for (const i of items) {
     if (isExcludedFromProfit(i)) continue
     const wt = i.work_type || '기타'
-    if (!map[wt]) map[wt] = { actualSum: 0, plannedSum: 0, items: [] }
-    const e = map[wt]
-    e.items.push(i)
-    const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-    if (qa <= 0) continue
-    e.actualSum += actualCost(i)
-    e.plannedSum += (i.planned_execution_amount ?? 0) > 0
-      ? i.planned_execution_amount!
-      : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
+    if (!map[wt]) map[wt] = []
+    map[wt].push(i)
   }
-  return Object.values(map).reduce(
-    (s, e) => s + (isGroupComplete(e.items) ? e.actualSum : Math.max(e.actualSum, e.plannedSum)),
-    0
-  )
+  return Object.values(map).reduce((s, g) => s + workTypeEffectiveCost(g, minProfitRate), 0)
 }
 
 export function calcQuoteSummary(

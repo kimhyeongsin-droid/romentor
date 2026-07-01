@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcFinalAmount, calcQuoteSummary, isGroupComplete, actualCost, isExcludedFromProfit, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
+import { calcFinalAmount, calcQuoteSummary, isGroupComplete, actualCost, isExcludedFromProfit, workTypeEffectiveCost, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -921,7 +921,7 @@ export default function QuoteDetailPage() {
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <div className="space-y-4">
           {grouped.map(({ wt, items: gItems }) => (
-            <div key={wt} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div key={wt} id={`worktype-${wt}`} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden scroll-mt-20">
               <div className="px-5 py-2.5 flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
                 <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
                 <span className="text-xs text-gray-400">{gItems.length}개</span>
@@ -1106,7 +1106,8 @@ export default function QuoteDetailPage() {
                         const groupActual = profitGItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
                         const groupCost = profitGItems.reduce((s, i) => s + actualCost(i), 0)
                         const groupIsComplete = isGroupComplete(profitGItems)
-                        const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupCost : null
+                        const groupEffectiveCost = workTypeEffectiveCost(profitGItems, minProfitRate)
+                        const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupEffectiveCost : null
                         const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
                         const leadingSpan = 1 + (['comment', 'unit', 'quantity'] as const).filter(k => showCol(k)).length
                         const trailingSpan = (showCol('remark') ? 1 : 0) + (isEditable ? 1 : 0)
