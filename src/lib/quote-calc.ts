@@ -232,9 +232,8 @@ export function workTypeEffectiveCost(
   let plannedMissing = 0
   for (const i of included) {
     const qa = (i.material_unit_price + i.labor_unit_price) * i.quantity
-    if (qa <= 0) continue
     effective += actualCost(i)
-    if (i.actual_execution_amount == null) {
+    if (i.actual_execution_amount == null && qa > 0) {
       plannedMissing += (i.planned_execution_amount ?? 0) > 0
         ? i.planned_execution_amount!
         : (minProfitRate != null ? Math.floor(qa * (1 - minProfitRate / 100)) : qa)
