@@ -376,7 +376,7 @@ export default function QuoteDetailPage() {
   const isSettlement = quote?.type === '정산'
   const { isAdmin, isAssignee } = usePermissions(quote?.project_id)
   const canEdit = quote ? canEditQuote({ isAdmin, isAssignee, status: quote.status }) : false
-  const isEditable = quote ? (!checkReadonly(quote.status) && canEdit) : false
+  const isEditable = quote ? ((!checkReadonly(quote.status) || isAdmin) && canEdit) : false
   const { widths: itemResizableWidths, startResize: startItemResize } = useResizableColumns(
     'romentor.quoteItemTable.settlement.colWidths', ITEM_DEFAULT_WIDTHS
   )
