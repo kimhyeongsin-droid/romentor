@@ -16,7 +16,10 @@ export default function NewProjectPage() {
   const [status, setStatus] = useState('draft')
   const [areaUnit, setAreaUnit] = useState<'sqm' | 'py'>('py')
   const [clients, setClients] = useState<Member[]>([{ name: '', phone: '', notify: true }])
-  const [pms, setPms] = useState<Member[]>([{ name: '', phone: '', notify: true }])
+  const [pms, setPms] = useState<Member[]>([
+    { name: '김형신', phone: '01063222367', notify: true },
+    { name: '김윤성', phone: '01048205583', notify: true },
+  ])
   const [designers, setDesigners] = useState<Member[]>([])
   const [siteManagers, setSiteManagers] = useState<Member[]>([])
   const [loading, setLoading] = useState(false)
