@@ -307,3 +307,29 @@ export function calcQuoteSummary(
     warnings,
   }
 }
+
+// ── 정산 조정(추가청구·반환) ──────────────────────────────────
+// 정산 시점에 고객에게 추가로 청구하거나 돌려줄 금액. 견적 라인(quote_items)과 별개로
+// quotes.settlement_adjustments(JSONB 배열)에 저장. 담당자 누락 방지용 목록 + 이윤 반영.
+export interface SettlementAdjustment {
+  id: string
+  type: '추가청구' | '반환'
+  description?: string
+  amount: number          // 부가세 포함 총액(고객 청구/반환 실액)으로 입력
+  done?: boolean          // 청구완료/반환완료 체크
+}
+
+// 조정액을 공급가(÷1.1)로 환산해 합산. 이윤은 공급가 기준이므로 actualCost와 동일 규칙.
+// 추가청구는 매출·이윤 증가(+), 반환은 감소(−).
+export function settlementAdjustmentSupply(
+  adjustments: SettlementAdjustment[] | null | undefined
+): { chargeSupply: number; refundSupply: number; netSupply: number } {
+  let chargeSupply = 0
+  let refundSupply = 0
+  for (const a of adjustments ?? []) {
+    const supply = Math.round((Number(a.amount) || 0) / 1.1)
+    if (a.type === '추가청구') chargeSupply += supply
+    else if (a.type === '반환') refundSupply += supply
+  }
+  return { chargeSupply, refundSupply, netSupply: chargeSupply - refundSupply }
+}

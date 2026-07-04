@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WORK_TYPE_COLOR, WORK_ORDER, type WorkType } from '@/types'
 import { DEFAULT_RATES, isReadonly as checkReadonly, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
-import { calcFinalAmount, calcQuoteSummary, isGroupComplete, actualCost, isExcludedFromProfit, workTypeEffectiveCost, tierOf, decideAlert, type AlertTier, type AlertState } from '@/lib/quote-calc'
+import { calcFinalAmount, calcQuoteSummary, isGroupComplete, actualCost, isExcludedFromProfit, workTypeEffectiveCost, tierOf, decideAlert, type AlertTier, type AlertState, type SettlementAdjustment } from '@/lib/quote-calc'
 import { generateQuoteNumber } from '@/lib/utils'
 import { Printer, ArrowLeft, Save, GripVertical, Plus, Trash2, Send } from 'lucide-react'
 import QuoteSummaryTable from '@/components/quotes/QuoteSummaryTable'
@@ -337,6 +337,7 @@ export default function QuoteDetailPage() {
   const [minProfitRate, setMinProfitRate] = useState<number | null>(null)
   const [worktypeMemos, setWorktypeMemos] = useState<Record<string, string>>({})
   const [settlementDone, setSettlementDone] = useState<Record<string, boolean>>({})
+  const [settlementAdjustments, setSettlementAdjustments] = useState<SettlementAdjustment[]>([])
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === 'undefined') return Object.fromEntries(TOGGLEABLE_COLUMNS.map(c => [c.key, true]))
     try {
@@ -396,6 +397,7 @@ export default function QuoteDetailPage() {
       if (q) {
         setMinProfitRate(q.min_profit_rate ?? q.projects?.min_profit_rate ?? null)
         setSettlementDone((q.settlement_done as Record<string, boolean> | null) ?? {})
+        setSettlementAdjustments((q.settlement_adjustments as SettlementAdjustment[] | null) ?? [])
         const round2 = (n: number) => Math.round(n * 100) / 100
         if (q.rate_accident_insurance != null) {
           setRates({
@@ -701,6 +703,7 @@ export default function QuoteDetailPage() {
         discount_amount: discount || 0,
         ...(isSettlement && { min_profit_rate: minProfitRate ?? 15 }),
         ...(isSettlement && { settlement_done: settlementDone }),
+        ...(isSettlement && { settlement_adjustments: settlementAdjustments }),
       }).eq('id', id)
 
       // trg_quotes_discount(BEFORE trigger)가 discount_amount 변경 시 final_amount를
@@ -878,6 +881,8 @@ export default function QuoteDetailPage() {
         onDiscountChange={setDiscount}
         worktypeMemos={worktypeMemos}
         onWorktypeMemoChange={(wt, memo) => setWorktypeMemos(prev => ({ ...prev, [wt]: memo }))}
+        settlementAdjustments={settlementAdjustments}
+        onAdjustmentsChange={setSettlementAdjustments}
       />
 
       {/* 컬럼 설정 */}

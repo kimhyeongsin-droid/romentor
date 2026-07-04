@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { WORK_ORDER, WORK_TYPE_COLOR } from '@/types'
-import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit, workTypeEffectiveCost } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, actualCost, isExcludedFromProfit, workTypeEffectiveCost, settlementAdjustmentSupply, type SettlementAdjustment } from '@/lib/quote-calc'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { ResizeHandle } from '@/components/common/ResizeHandle'
 
@@ -42,6 +42,8 @@ interface Props {
   onDiscountChange: (value: number) => void
   worktypeMemos?: Record<string, string>
   onWorktypeMemoChange?: (workType: string, memo: string) => void
+  settlementAdjustments?: SettlementAdjustment[]
+  onAdjustmentsChange?: (next: SettlementAdjustment[]) => void
 }
 
 const fmt = (n: number) => n.toLocaleString()
@@ -53,8 +55,25 @@ const SUMMARY_DEFAULT_WIDTHS = {
 
 export default function QuoteSummaryTable({
   items, rates, discount, open, onToggle, isEditable, isContract, minProfitRate, onMinProfitRateChange, onRateChange, onDiscountChange, worktypeMemos = {}, onWorktypeMemoChange,
+  settlementAdjustments = [], onAdjustmentsChange,
 }: Props) {
   const [rawDiscount, setRawDiscount] = useState<string | null>(null)
+  const [newAdjType, setNewAdjType] = useState<'추가청구' | '반환'>('추가청구')
+  const [newAdjDesc, setNewAdjDesc] = useState('')
+  const [newAdjAmount, setNewAdjAmount] = useState('')
+
+  const addAdjustment = () => {
+    const amt = Number(newAdjAmount)
+    if (!amt || amt <= 0) return
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now())
+    onAdjustmentsChange?.([...settlementAdjustments, { id, type: newAdjType, description: newAdjDesc.trim(), amount: amt, done: false }])
+    setNewAdjDesc('')
+    setNewAdjAmount('')
+  }
+  const removeAdjustment = (id: string) =>
+    onAdjustmentsChange?.(settlementAdjustments.filter(a => a.id !== id))
+  const toggleAdjustmentDone = (id: string) =>
+    onAdjustmentsChange?.(settlementAdjustments.map(a => a.id === id ? { ...a, done: !a.done } : a))
   const { widths: resizableSummaryWidths, startResize: startSummaryResize } = useResizableColumns(
     'romentor.quoteSummaryTable.settlement.colWidths', SUMMARY_DEFAULT_WIDTHS
   )
@@ -114,6 +133,14 @@ export default function QuoteSummaryTable({
   const totalActualProfit = totalActualQuoteSum > 0 ? totalActualQuoteSum - totalActualCost : null
   const totalActualProfitRate = totalActualProfit !== null && totalActualQuoteSum > 0
     ? (totalActualProfit / totalActualQuoteSum) * 100 : null
+
+  // 정산 조정(추가청구·반환) 반영: 확정분 이윤/매출(공급가)에 통합
+  const { chargeSupply, refundSupply, netSupply } = settlementAdjustmentSupply(settlementAdjustments)
+  const hasAdjust = settlementAdjustments.length > 0
+  const adjustedQuoteSum = totalActualQuoteSum + netSupply
+  const adjustedProfit = totalActualProfit !== null ? totalActualProfit + netSupply : (hasAdjust ? netSupply : null)
+  const adjustedProfitRate = adjustedProfit !== null && adjustedQuoteSum > 0
+    ? (adjustedProfit / adjustedQuoteSum) * 100 : null
 
   // 계약 모드: 9컬럼 (기본5 + 실행금액/이윤/이윤율/메모), 일반: 5컬럼
   const totalCols = isContract ? 10 : 5
@@ -419,34 +446,48 @@ export default function QuoteSummaryTable({
                 )}
               </tr>
 
-              {/* 실행가 요약 (계약 + 실제 실행금액 있을 때만) */}
-              {isContract && completedGroups > 0 && (
+              {/* 실행가 요약 (계약 + 실제 실행금액 또는 정산 조정 있을 때) */}
+              {isContract && (completedGroups > 0 || hasAdjust) && (
                 <>
-                  <tr className={`internal-only ${totalActualProfit !== null && totalActualProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                    <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">현재까지 실행금액 합계</td>
-                    <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalActualExec)} 원</td>
-                  </tr>
-                  {totalActualProfit !== null && (
-                    <tr className={`internal-only ${totalActualProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
+                  {completedGroups > 0 && (
+                    <tr className={`internal-only ${totalActualProfit !== null && totalActualProfit < 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+                      <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">현재까지 실행금액 합계</td>
+                      <td className="px-4 py-2.5 text-xs font-bold text-right text-red-600">{fmt(totalActualExec)} 원</td>
+                    </tr>
+                  )}
+                  {chargeSupply > 0 && (
+                    <tr className="internal-only bg-emerald-50">
+                      <td colSpan={9} className="px-4 py-2.5 text-xs font-bold text-emerald-800">＋ 추가청구 반영 <span className="font-normal text-emerald-500">(공급가)</span></td>
+                      <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-700">+{fmt(chargeSupply)} 원</td>
+                    </tr>
+                  )}
+                  {refundSupply > 0 && (
+                    <tr className="internal-only bg-rose-50">
+                      <td colSpan={9} className="px-4 py-2.5 text-xs font-bold text-rose-800">－ 반환 반영 <span className="font-normal text-rose-500">(공급가)</span></td>
+                      <td className="px-4 py-2.5 text-xs font-bold text-right text-rose-700">−{fmt(refundSupply)} 원</td>
+                    </tr>
+                  )}
+                  {adjustedProfit !== null && (
+                    <tr className={`internal-only ${adjustedProfit < 0 ? 'bg-red-100' : 'bg-green-100'}`}>
                       <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">
-                        현재까지 이윤 (확정분 · {completedGroups}/{totalGroups} 공종){totalActualProfit < 0 ? ' ⚠️ 마이너스!' : ''}
-                        {totalActualProfitRate !== null && (
-                          <span className={`ml-2 font-normal ${totalActualProfitRate < 0 ? 'text-red-500' : 'text-green-600'}`}>
-                            ({totalActualProfitRate.toFixed(1)}%)
+                        현재까지 이윤 {hasAdjust ? '(조정 반영' : '(확정분'} · {completedGroups}/{totalGroups} 공종){adjustedProfit < 0 ? ' ⚠️ 마이너스!' : ''}
+                        {adjustedProfitRate !== null && (
+                          <span className={`ml-2 font-normal ${adjustedProfitRate < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            ({adjustedProfitRate.toFixed(1)}%)
                           </span>
                         )}
                       </td>
-                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
-                        {fmt(totalActualProfit)} 원
+                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${adjustedProfit < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                        {fmt(adjustedProfit)} 원
                       </td>
                     </tr>
                   )}
-                  {minProfitRate != null && totalActualProfitRate !== null && (
-                    <tr className={`internal-only ${totalActualProfitRate >= minProfitRate ? 'bg-green-50' : 'bg-red-50'}`}>
+                  {minProfitRate != null && adjustedProfitRate !== null && (
+                    <tr className={`internal-only ${adjustedProfitRate >= minProfitRate ? 'bg-green-50' : 'bg-red-50'}`}>
                       <td colSpan={9} className="px-4 py-2.5 text-xs font-bold">
-                        목표 이윤율 {totalActualProfitRate >= minProfitRate ? '✓ 달성' : '✗ 미달'}
+                        목표 이윤율 {adjustedProfitRate >= minProfitRate ? '✓ 달성' : '✗ 미달'}
                       </td>
-                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${totalActualProfitRate >= minProfitRate ? 'text-green-700' : 'text-red-700'}`}>
+                      <td className={`px-4 py-2.5 text-xs font-bold text-right ${adjustedProfitRate >= minProfitRate ? 'text-green-700' : 'text-red-700'}`}>
                         {minProfitRate}%
                       </td>
                     </tr>
@@ -502,6 +543,95 @@ export default function QuoteSummaryTable({
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* 추가청구 · 반환 내역 (정산 조정) */}
+        {isContract && (
+          <div className="internal-only border-t border-gray-200 px-5 py-4">
+            <div className="text-xs font-bold text-gray-700 mb-2">
+              추가청구 · 반환 내역{' '}
+              <span className="font-normal text-gray-400">(부가세 포함 입력 · 이윤 자동 반영 · 담당자 청구/반환 체크)</span>
+            </div>
+            {settlementAdjustments.length === 0 ? (
+              <p className="text-xs text-gray-400 mb-2">등록된 항목이 없습니다.</p>
+            ) : (
+              <div className="overflow-x-auto mb-2">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-500">
+                      <th className="px-3 py-1.5 text-center font-semibold w-20">구분</th>
+                      <th className="px-3 py-1.5 text-left font-semibold">내용</th>
+                      <th className="px-3 py-1.5 text-right font-semibold">금액(VAT 포함)</th>
+                      <th className="px-3 py-1.5 text-right font-semibold">이윤반영(공급가)</th>
+                      <th className="px-3 py-1.5 text-center font-semibold w-24">처리</th>
+                      {isEditable && <th className="px-3 py-1.5 w-8"></th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {settlementAdjustments.map(a => {
+                      const supply = Math.round((Number(a.amount) || 0) / 1.1)
+                      const isCharge = a.type === '추가청구'
+                      return (
+                        <tr key={a.id} className={a.done ? 'text-gray-400 line-through' : 'text-gray-600'}>
+                          <td className="px-3 py-1.5 text-center">
+                            <span className={`px-2 py-0.5 rounded-full font-semibold ${isCharge ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{a.type}</span>
+                          </td>
+                          <td className="px-3 py-1.5 text-left">{a.description || '-'}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmt(a.amount)}</td>
+                          <td className={`px-3 py-1.5 text-right tabular-nums font-semibold ${isCharge ? 'text-emerald-600' : 'text-rose-600'}`}>{isCharge ? '+' : '−'}{fmt(supply)}</td>
+                          <td className="px-3 py-1.5 text-center">
+                            <label className={`inline-flex items-center gap-1 ${isEditable ? 'cursor-pointer' : 'cursor-default'}`}>
+                              <input type="checkbox" checked={a.done === true} disabled={!isEditable} onChange={() => toggleAdjustmentDone(a.id)} />
+                              <span className={a.done ? 'text-green-600 font-semibold no-underline' : 'text-gray-400'}>{isCharge ? '청구완료' : '반환완료'}</span>
+                            </label>
+                          </td>
+                          {isEditable && (
+                            <td className="px-3 py-1.5 text-center">
+                              <button onClick={() => removeAdjustment(a.id)} className="text-gray-300 hover:text-red-400" title="삭제">✕</button>
+                            </td>
+                          )}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {isEditable && (
+              <div className="flex flex-wrap gap-2 items-center pt-1">
+                <select
+                  value={newAdjType}
+                  onChange={e => setNewAdjType(e.target.value as '추가청구' | '반환')}
+                  className="text-xs border border-gray-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
+                >
+                  <option value="추가청구">추가청구</option>
+                  <option value="반환">반환</option>
+                </select>
+                <input
+                  type="text"
+                  value={newAdjDesc}
+                  onChange={e => setNewAdjDesc(e.target.value)}
+                  placeholder="내용 (예: 자재 추가분)"
+                  className="flex-1 min-w-[140px] text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={newAdjAmount}
+                  onChange={e => { const v = e.target.value; if (v === '' || /^[0-9]+$/.test(v)) setNewAdjAmount(v) }}
+                  onKeyDown={e => { if (e.key === 'Enter') addAdjustment() }}
+                  placeholder="금액 (VAT 포함)"
+                  className="w-36 text-xs text-right border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                />
+                <button
+                  onClick={addAdjustment}
+                  className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 font-medium"
+                >
+                  추가
+                </button>
+              </div>
+            )}
           </div>
         )}
         </>
