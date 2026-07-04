@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, calcProjectedExec, actualCost, isExcludedFromProfit, type WorkTypeWarning } from '@/lib/quote-calc'
+import { calcFinalAmount, isGroupComplete, calcWorkTypeWarnings, calcProjectedExec, actualCost, isExcludedFromProfit, settlementAdjustmentSupply, type WorkTypeWarning } from '@/lib/quote-calc'
 import { DEFAULT_RATES } from '@/lib/quoteConstants'
 
 interface QuoteItem {
@@ -80,7 +80,7 @@ export default function DashboardPage() {
 
       let query = sb
         .from('quotes')
-        .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included, settlement_type, execution_date)')
+        .select('id, project_id, quote_number, min_profit_rate, rate_accident_insurance, rate_employment_insurance, rate_indirect_overhead, rate_profit_margin, rate_vat, discount_amount, settlement_adjustments, created_at, updated_at, projects(id, name, min_profit_rate), quote_items(id, work_type, item_name, material_unit_price, labor_unit_price, quantity, actual_execution_amount, actual_vat_included, settlement_type, execution_date)')
         .eq('type', '정산')
         .order('updated_at', { ascending: false })
 
@@ -130,8 +130,11 @@ export default function DashboardPage() {
 
         // 직접공사비 + 예상 이윤 (공정별 MAX(실제합, 목표합) lump-safe projection)
         const directQuote = directQuoteCalc
-        const projectedProfit = directQuote - calcProjectedExec(items, minProfitRate)
-        const projectedProfitRate = directQuote > 0 ? (projectedProfit / directQuote) * 100 : 0
+        // 정산 조정(추가청구·반환) 공급가 순액 — 견적합계표와 동일 규칙으로 이윤·매출 양쪽 반영
+        const { netSupply: adjNet } = settlementAdjustmentSupply((q as any).settlement_adjustments)
+        const projectedProfit = directQuote - calcProjectedExec(items, minProfitRate) + adjNet
+        const projDenom = directQuote + adjNet
+        const projectedProfitRate = projDenom > 0 ? (projectedProfit / projDenom) * 100 : 0
 
         // 현재이윤율: 완료 공종(별도/제외 제외)만의 실적 — calcQuoteSummary.currentProfitRate와 동일 정의
         const profitItems = items.filter(i => !isExcludedFromProfit(i))
@@ -143,7 +146,8 @@ export default function DashboardPage() {
         const completedItems = Object.values(cGrouped).filter(g => g.length > 0 && isGroupComplete(g)).flat()
         const curQuoteSum = completedItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
         const curExec = completedItems.reduce((s, i) => s + actualCost(i), 0)
-        const currentProfitRate: number | null = curQuoteSum > 0 ? ((curQuoteSum - curExec) / curQuoteSum) * 100 : null
+        const curDenom = curQuoteSum + adjNet
+        const currentProfitRate: number | null = curDenom > 0 ? ((curQuoteSum - curExec + adjNet) / curDenom) * 100 : null
 
         // 공종별 경고: 마이너스(적자) + 목표미달 (actual만 합산, 부분 입력 실시간 반영)
         const warnings = calcWorkTypeWarnings(items, minProfitRate)
