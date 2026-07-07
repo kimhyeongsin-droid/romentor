@@ -246,9 +246,14 @@ export default function DashboardPage() {
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
 
   const fmt = (n: number) => n.toLocaleString()
+  const fmtMan = (n: number) => {
+    const man = n / 10000
+    if (Math.abs(man) >= 1) return `${Math.round(man).toLocaleString()}만원`
+    return `${Math.round(n).toLocaleString()}원`
+  }
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-900">대시보드</h2>
       </div>
@@ -263,7 +268,8 @@ export default function DashboardPage() {
             {isAdmin ? '진행 중인 프로젝트가 없습니다' : '배정된 현장이 없습니다. 관리자에게 문의하세요.'}
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
@@ -361,6 +367,66 @@ export default function DashboardPage() {
               </tbody>
             </table>
           </div>
+
+          <div className="md:hidden divide-y divide-gray-100">
+            {rows.map(row => {
+              const progressPct = row.totalGroups > 0 ? (row.completedGroups / row.totalGroups) * 100 : 0
+              const warningCount = row.warnings.length
+              const hasDeficit = row.warnings.some(w => w.tier === 'deficit')
+              const hasTarget = row.minProfitRate != null
+              const achievingTarget = hasTarget && row.projectedProfitRate >= row.minProfitRate!
+              const belowTarget = hasTarget && row.projectedProfitRate < row.minProfitRate!
+              return (
+                <div key={row.projectId} className={`p-4 ${hasDeficit ? 'bg-red-50' : warningCount > 0 ? 'bg-amber-50' : ''}`}>
+                  <div className="flex items-start justify-between gap-2 mb-2.5">
+                    <div className="min-w-0">
+                      <Link href={`/quotes/${row.quoteId}`} className="font-semibold text-gray-900 break-keep hover:text-blue-600">{row.projectName}</Link>
+                      <div className="text-xs text-gray-400 mt-0.5 font-mono">{row.quoteNumber}</div>
+                    </div>
+                    {belowTarget ? (
+                      <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full font-bold bg-red-100 text-red-700 ring-1 ring-red-300">▼ 목표 미달</span>
+                    ) : achievingTarget ? (
+                      <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-green-100 text-green-700">✓ 이윤 달성</span>
+                    ) : null}
+                  </div>
+
+                  <div className="bg-white rounded-lg border border-gray-100 px-3 py-2.5 mb-2.5">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-xs text-gray-500">예상 이윤</span>
+                      <span className={`text-lg font-semibold tabular-nums ${row.projectedProfit < 0 ? 'text-red-600' : 'text-gray-900'}`}>{fmt(row.projectedProfit)}원</span>
+                    </div>
+                    <div className="flex gap-3 mt-1.5 text-xs">
+                      <span className="text-gray-500">현재 <b className="font-medium text-gray-800">{row.currentProfitRate != null ? `${row.currentProfitRate.toFixed(1)}%` : '집계 전'}</b></span>
+                      <span className="text-gray-500">예상 <b className={`font-medium ${belowTarget ? 'text-red-600' : achievingTarget ? 'text-green-600' : row.projectedProfitRate < 0 ? 'text-red-400' : 'text-gray-600'}`}>{row.projectedProfitRate.toFixed(1)}%</b></span>
+                      <span className="text-gray-400">목표 {row.minProfitRate != null ? `${row.minProfitRate}%` : '-'}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between text-[11px] text-gray-400 mb-1">
+                        <span>진행률</span>
+                        <span>{row.completedGroups}/{row.totalGroups} · {progressPct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500" style={{ width: `${progressPct}%` }} /></div>
+                    </div>
+                    {warningCount > 0 ? (
+                      <button onClick={() => openModal(row)} className={`flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full font-medium ${hasDeficit ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>⚠ {warningCount}건</button>
+                    ) : (
+                      <span className="flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">정상</span>
+                    )}
+                  </div>
+
+                  <div className="flex gap-4 mt-2.5 text-[11px] text-gray-400">
+                    <span>견적 {fmtMan(row.finalAmount)}</span>
+                    <span>직공비 {fmtMan(row.directQuote)}</span>
+                    <span className="text-gray-400">{formatDate(row.createdAt)}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          </>
         )}
       </div>
 
