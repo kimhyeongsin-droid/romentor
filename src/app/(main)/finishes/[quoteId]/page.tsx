@@ -14,6 +14,16 @@ import {
 
 type Mode = 'internal' | 'customer'
 
+function warnStatus(until: string | null): 'expired' | 'soon' | null {
+  if (!until) return null
+  const d = new Date(until).getTime()
+  const now = Date.now()
+  if (isNaN(d)) return null
+  if (d < now) return 'expired'
+  if (d - now <= 60 * 24 * 3600 * 1000) return 'soon'
+  return null
+}
+
 export default function FinishDetailPage() {
   const quoteId = (useParams() as any)?.quoteId as string
 
@@ -142,16 +152,16 @@ export default function FinishDetailPage() {
   const isCustomer = mode === 'customer'
 
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-6 print:hidden">
-        <div>
+    <div className="p-4 md:p-8">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6 print:hidden">
+        <div className="min-w-0">
           <Link href="/finishes" className="text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 mb-1">
             <ArrowLeft size={12} /> 마감재 목록
           </Link>
-          <h2 className="text-2xl font-bold text-gray-900">{site.name || '현장'} · 마감재</h2>
-          <p className="text-gray-500 text-sm mt-1">{site.client}{site.address ? ` · ${site.address}` : ''}</p>
+          <h2 className="text-xl md:text-2xl font-bold text-gray-900 break-keep">{site.name || '현장'} · 마감재</h2>
+          <p className="text-gray-500 text-sm mt-1 break-keep">{site.client}{site.address ? ` · ${site.address}` : ''}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <div className="inline-flex border border-gray-200 rounded-lg overflow-hidden text-sm">
             <button onClick={() => setMode('internal')}
               className={`px-3 py-2 flex items-center gap-1 ${!isCustomer ? 'bg-slate-800 text-white' : 'bg-white text-gray-500'}`}>
@@ -163,7 +173,7 @@ export default function FinishDetailPage() {
             </button>
           </div>
           <button onClick={() => window.print()}
-            className="flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
+            className="hidden md:flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
             <Printer size={16} /> 인쇄
           </button>
         </div>
@@ -176,17 +186,18 @@ export default function FinishDetailPage() {
       {loading ? (
         <div className="text-center text-gray-400 py-12">불러오는 중…</div>
       ) : groups.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+        <div className="bg-white rounded-xl border border-gray-100 p-8 md:p-12 text-center">
           <p className="text-gray-400 mb-4">아직 마감재가 없습니다.</p>
           <button onClick={seedFromQuote} disabled={seeding}
-            className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+            className="hidden md:inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
             <Download size={16} /> {seeding ? '불러오는 중…' : '정산 견적에서 공종 불러오기'}
           </button>
+          <p className="md:hidden text-xs text-gray-400">데스크탑에서 정산 견적의 공종을 불러올 수 있어요.</p>
         </div>
       ) : (
         <>
           {!isCustomer && (
-            <div className="mb-4 print:hidden">
+            <div className="mb-4 print:hidden hidden md:block">
               {!showAddType ? (
                 <button onClick={() => setShowAddType(true)}
                   className="inline-flex items-center gap-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
@@ -226,19 +237,21 @@ export default function FinishDetailPage() {
             </div>
           )}
 
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-6">
             {groups.map(({ wt, items }) => {
               const attrFields = finishAttrFields(wt)
               const visibleAttrs = attrFields.filter(a => !(isCustomer && (a === 'quantity' || a === 'unit')))
               return (
                 <div key={wt} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 flex items-center justify-between" style={{ background: 'rgba(0,0,0,0.03)' }}>
+                  <div className="px-4 md:px-5 py-3 flex items-center justify-between" style={{ background: 'rgba(0,0,0,0.03)' }}>
                     <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${finishWtColor(wt)}`}>{wt}</span>
-                    <button onClick={() => addRow(wt)} className="text-xs text-gray-400 hover:text-blue-600 flex items-center gap-1 print:hidden">
+                    <button onClick={() => addRow(wt)} className="hidden md:flex text-xs text-gray-400 hover:text-blue-600 items-center gap-1 print:hidden">
                       <Plus size={12} /> 행 추가
                     </button>
                   </div>
-                  <div className="overflow-x-auto">
+
+                  {/* 데스크탑: 표 (인쇄도 표 사용) */}
+                  <div className="hidden md:block print:block overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-gray-50 border-b border-gray-100">
                         <tr>
@@ -275,6 +288,47 @@ export default function FinishDetailPage() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* 모바일: 조회 카드 */}
+                  <div className="md:hidden print:hidden divide-y divide-gray-100">
+                    {items.map(r => {
+                      const ws = warnStatus(r.warranty_until)
+                      const pairs: { k: string; v: string }[] = []
+                      if (r.location) pairs.push({ k: '적용위치', v: r.location })
+                      if (r.color_code) pairs.push({ k: '컬러/품번', v: r.color_code })
+                      if (!isCustomer && r.vendor) pairs.push({ k: '발주처', v: r.vendor })
+                      for (const a of visibleAttrs) {
+                        const val = r.attrs?.[a]
+                        if (val) pairs.push({ k: ATTR_LABEL[a], v: val })
+                      }
+                      if (r.installed_at) pairs.push({ k: '시공일', v: r.installed_at })
+                      if (r.warranty_until) pairs.push({ k: '보증만료', v: r.warranty_until })
+                      if (r.note) pairs.push({ k: '비고', v: r.note })
+                      return (
+                        <div key={r.id} className="p-4">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <p className="font-medium text-gray-900 break-keep">{r.product_name || <span className="text-gray-300">제품명 미입력</span>}</p>
+                            {ws && (
+                              <span className={`flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full font-medium ${ws === 'expired' ? 'bg-gray-100 text-gray-500' : 'bg-red-100 text-red-600'}`}>
+                                {ws === 'expired' ? '보증만료' : '보증임박'}
+                              </span>
+                            )}
+                          </div>
+                          {r.brand && <p className="text-xs text-gray-400 mb-2">{r.brand}</p>}
+                          {pairs.length > 0 && (
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                              {pairs.map(({ k, v }) => (
+                                <div key={k} className="contents">
+                                  <dt className="text-gray-400 text-xs whitespace-nowrap py-0.5">{k}</dt>
+                                  <dd className="text-gray-800 break-keep py-0.5">{v}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )
