@@ -1,29 +1,26 @@
 'use client'
-
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, ChevronLeft, ChevronRight, Users } from 'lucide-react'
+import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, Layers, ChevronLeft, ChevronRight, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed'
 import { usePermissions } from '@/hooks/usePermissions'
 import UserMenu from '@/app/(main)/_components/UserMenu'
-
 const nav = [
   { href: '/dashboard', label: '대시보드', icon: LayoutDashboard },
   { href: '/projects', label: '프로젝트', icon: FileText },
   { href: '/quotes', label: '견적 관리', icon: FileText },
+  { href: '/finishes', label: '마감재 관리', icon: Layers },
   { href: '/units', label: '단가 마스터', icon: BookOpen },
   { href: '/template', label: '기본 견적 포맷', icon: ClipboardList },
   { href: '/alerts', label: '알람 로그', icon: Bell },
   { href: '/guide', label: '사용 가이드', icon: HelpCircle },
 ]
-
 export default function Sidebar() {
   const pathname = usePathname()
   const { collapsed, toggle } = useSidebarCollapsed()
   const { isAdmin } = usePermissions()
   const navItems = isAdmin ? [...nav, { href: '/admin', label: '팀 관리', icon: Users }] : nav
-
   return (
     <aside className={cn(
       'h-full bg-slate-900 text-white flex flex-col flex-shrink-0 overflow-x-hidden overflow-y-auto transition-[width] duration-200 ease-out',
@@ -48,7 +45,6 @@ export default function Sidebar() {
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
       </div>
-
       {/* Nav */}
       <nav className="flex-1 p-3 space-y-1">
         {navItems.map(({ href, label, icon: Icon }) => (
@@ -69,10 +65,8 @@ export default function Sidebar() {
           </Link>
         ))}
       </nav>
-
       {/* User */}
       {!collapsed && <UserMenu />}
-
       {/* Footer */}
       {!collapsed && (
         <div className="p-4 border-t border-slate-700 text-xs text-slate-500 whitespace-nowrap">
