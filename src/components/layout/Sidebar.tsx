@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, Layers, ChevronLeft, ChevronRight, Users } from 'lucide-react'
+import { LayoutDashboard, FileText, BookOpen, Bell, ClipboardList, HelpCircle, Layers, ExternalLink, ChevronLeft, ChevronRight, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -15,6 +15,9 @@ const nav = [
   { href: '/template', label: '기본 견적 포맷', icon: ClipboardList },
   { href: '/alerts', label: '알람 로그', icon: Bell },
   { href: '/guide', label: '사용 가이드', icon: HelpCircle },
+]
+const externalNav = [
+  { href: 'https://romentor-premeeting-tool.vercel.app', label: '사전미팅툴', icon: ExternalLink },
 ]
 export default function Sidebar() {
   const pathname = usePathname()
@@ -64,6 +67,26 @@ export default function Sidebar() {
             {!collapsed && <span className="whitespace-nowrap">{label}</span>}
           </Link>
         ))}
+
+        {/* 외부 사내 시스템 */}
+        <div className="pt-2 mt-2 border-t border-slate-700/60">
+          {externalNav.map(({ href, label, icon: Icon }) => (
+            <a
+              key={href}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={label}
+              className={cn(
+                'flex items-center rounded-lg text-sm font-medium transition-colors text-slate-300 hover:bg-slate-800 hover:text-white',
+                collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5'
+              )}
+            >
+              <Icon size={18} />
+              {!collapsed && <span className="whitespace-nowrap">{label}</span>}
+            </a>
+          ))}
+        </div>
       </nav>
       {/* User */}
       {!collapsed && <UserMenu />}
