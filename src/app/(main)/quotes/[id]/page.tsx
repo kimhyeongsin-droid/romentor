@@ -348,6 +348,7 @@ export default function QuoteDetailPage() {
   })
   const [showColumnSettings, setShowColumnSettings] = useState(false)
   const columnSettingsRef = useRef<HTMLDivElement>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     try { localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(visibleColumns)) } catch {}
@@ -780,15 +781,20 @@ export default function QuoteDetailPage() {
     .filter(g => isEditable || g.items.length > 0)
 
   const fmt = (n: number) => n.toLocaleString()
+  const fmtMan = (n: number) => {
+    const man = n / 10000
+    if (Math.abs(man) >= 1) return `${Math.round(man).toLocaleString()}만원`
+    return `${Math.round(n).toLocaleString()}원`
+  }
 
   if (loading) return <div className="p-8 text-gray-400">불러오는 중...</div>
 
   const statusBadgeClass = QUOTE_STATUS_COLOR[quote?.status as keyof typeof QUOTE_STATUS_COLOR] ?? 'bg-gray-100 text-gray-600'
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       {/* 헤더 */}
-      <StickyToolbar className="-mx-8 px-8 py-3 mb-4">
+      <StickyToolbar className="-mx-4 px-4 md:-mx-8 md:px-8 py-3 mb-4">
         <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => router.back()} className="text-gray-400 hover:text-gray-600">
@@ -807,7 +813,7 @@ export default function QuoteDetailPage() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2 no-print">
+        <div className="flex flex-wrap gap-2 no-print justify-end">
           <button onClick={() => setPrintMode('client')}
             className="flex items-center gap-2 bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200">
             <Printer size={15} /> 고객용 인쇄
@@ -866,7 +872,39 @@ export default function QuoteDetailPage() {
         </div>
       )}
 
+      {/* 모바일 요약 카드 */}
+      <div className="md:hidden mb-4">
+        {(() => {
+          const { finalAmount } = calcFinalAmount({ items, rates, discount })
+          let totalQuote = 0, totalCost = 0
+          for (const { items: gI } of grouped) {
+            const pIt = gI.filter(i => !isExcludedFromProfit(i))
+            totalQuote += pIt.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+            totalCost += workTypeEffectiveCost(pIt, minProfitRate)
+          }
+          const totalProfit = totalQuote - totalCost
+          const totalRate = totalQuote > 0 ? (totalProfit / totalQuote) * 100 : null
+          const cells: { label: string; value: string; cls?: string }[] = [
+            { label: '견적금액', value: fmtMan(finalAmount) },
+            { label: '원가', value: fmtMan(totalCost) },
+            { label: '이윤', value: fmtMan(totalProfit), cls: totalProfit < 0 ? 'text-red-600' : 'text-gray-900' },
+            { label: '이윤율', value: totalRate !== null ? `${totalRate.toFixed(1)}%` : '-', cls: totalRate === null ? 'text-gray-400' : totalRate < 0 ? 'text-red-600' : 'text-green-600' },
+          ]
+          return (
+            <div className="grid grid-cols-2 gap-2">
+              {cells.map(c => (
+                <div key={c.label} className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
+                  <p className="text-xs text-gray-500 mb-1">{c.label}</p>
+                  <p className={`text-lg font-semibold ${c.cls ?? 'text-gray-900'}`}>{c.value}</p>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
+      </div>
+
       {/* 견적 합계표 */}
+      <div className="hidden md:block">
       <QuoteSummaryTable
         items={items}
         rates={rates}
@@ -884,10 +922,11 @@ export default function QuoteDetailPage() {
         settlementAdjustments={settlementAdjustments}
         onAdjustmentsChange={setSettlementAdjustments}
       />
+      </div>
 
       {/* 컬럼 설정 */}
       {isSettlement && (
-        <div className="no-print flex justify-end mb-3">
+        <div className="no-print hidden md:flex justify-end mb-3">
           <div className="relative" ref={columnSettingsRef}>
             <button
               onClick={() => setShowColumnSettings(v => !v)}
@@ -927,7 +966,7 @@ export default function QuoteDetailPage() {
         <div className="space-y-4">
           {grouped.map(({ wt, items: gItems }) => (
             <div key={wt} id={`worktype-${wt}`} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden scroll-mt-20">
-              <div className="px-5 py-2.5 flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
+              <div className="px-5 py-2.5 hidden md:flex items-center gap-2" style={{ background: 'rgba(0,0,0,0.03)' }}>
                 <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
                 <span className="text-xs text-gray-400">{gItems.length}개</span>
                 {isSettlement && (() => {
@@ -966,7 +1005,7 @@ export default function QuoteDetailPage() {
                   </button>
                 )}
               </div>
-              <div className="overflow-x-auto">
+              <div className="hidden md:block overflow-x-auto">
                 <table className={`w-full text-sm min-w-[1000px]${isSettlement ? ' table-fixed' : ''}`}>
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
@@ -1180,6 +1219,69 @@ export default function QuoteDetailPage() {
                   </SortableContext>
                 </table>
               </div>
+
+              {/* 모바일 카드 */}
+              <div className="md:hidden">
+                {gItems.length > 0 && (() => {
+                  const profitGItems = gItems.filter(i => !isExcludedFromProfit(i))
+                  const groupQuote = profitGItems.reduce((s, i) => s + (i.material_unit_price + i.labor_unit_price) * i.quantity, 0)
+                  const groupActual = profitGItems.reduce((s, i) => s + (i.actual_execution_amount ?? 0), 0)
+                  const groupIsComplete = isGroupComplete(profitGItems)
+                  const groupEffectiveCost = workTypeEffectiveCost(profitGItems, minProfitRate)
+                  const groupProfit: number | null = (groupIsComplete || groupActual > 0) ? groupQuote - groupEffectiveCost : null
+                  const groupProfitRate: number | null = groupProfit !== null && groupQuote > 0 ? (groupProfit / groupQuote) * 100 : null
+                  const hasDeficit = groupProfit !== null && groupProfit < 0
+                  const expanded = expandedGroups[wt] ?? hasDeficit
+                  return (
+                    <>
+                      <button
+                        onClick={() => setExpandedGroups(p => ({ ...p, [wt]: !(p[wt] ?? hasDeficit) }))}
+                        className={`w-full flex items-center gap-2 px-4 py-3 text-left ${hasDeficit ? 'bg-red-50' : ''}`}>
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${WORK_TYPE_COLOR[wt as WorkType] ?? 'bg-gray-100 text-gray-600'}`}>{wt}</span>
+                        <span className="text-xs text-gray-400">{gItems.length}개</span>
+                        <span className="flex-1" />
+                        <span className="text-sm text-gray-700">{fmtMan(groupQuote)}</span>
+                        {isSettlement && groupProfitRate !== null && (
+                          <span className={`text-xs w-12 text-right ${hasDeficit ? 'text-red-600' : 'text-green-600'}`}>{groupProfitRate.toFixed(0)}%</span>
+                        )}
+                        <span className="text-gray-300 text-xs w-3 text-center">{expanded ? '▾' : '▸'}</span>
+                      </button>
+                      {expanded && (
+                        <div className="px-4 pb-3 space-y-2">
+                          {gItems.map(item => {
+                            const quoteAmt = (item.material_unit_price + item.labor_unit_price) * item.quantity
+                            const actual = item.actual_execution_amount
+                            const isActualBased = actual !== null && actual !== undefined
+                            const cost = actualCost(item)
+                            const profit: number | null = isActualBased && quoteAmt > 0 ? quoteAmt - cost : null
+                            const profitRate: number | null = profit !== null && quoteAmt > 0 ? (profit / quoteAmt) * 100 : null
+                            const excluded = isExcludedFromProfit(item)
+                            return (
+                              <div key={item.id} className={`rounded-lg px-3 py-2.5 ${profit !== null && profit < 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
+                                <div className="flex justify-between items-baseline gap-2">
+                                  <span className="text-sm text-gray-800 break-keep">{item.item_name || '(항목명 없음)'}</span>
+                                  <span className="text-sm text-gray-800 whitespace-nowrap">{fmtMan(quoteAmt)}</span>
+                                </div>
+                                <div className="text-xs text-gray-400 mt-0.5">
+                                  {item.quantity}{item.unit}{item.execution_date ? ` · 지출 ${item.execution_date}` : ''}
+                                </div>
+                                {isSettlement && !excluded && (
+                                  <div className="flex gap-3 mt-1 text-xs">
+                                    <span className="text-gray-500">실행 {isActualBased ? fmtMan(cost) : '-'}</span>
+                                    {profit !== null && <span className={(profit < 0) ? 'text-red-600' : 'text-gray-600'}>이윤 {fmtMan(profit)}</span>}
+                                    {profitRate !== null && <span className={(profit ?? 0) < 0 ? 'text-red-600' : 'text-green-600'}>{profitRate.toFixed(0)}%</span>}
+                                  </div>
+                                )}
+                                {isSettlement && excluded && <div className="text-xs text-gray-300 mt-1">이윤 계산 제외</div>}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
+              </div>
             </div>
           ))}
         </div>
@@ -1187,7 +1289,7 @@ export default function QuoteDetailPage() {
 
       {/* 하단 저장 버튼 */}
       {isEditable && (
-        <div className="no-print flex gap-3 mt-8">
+        <div className="no-print hidden md:flex gap-3 mt-8">
           <button onClick={handleSave} disabled={saving}
             className="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50">
             {saving ? '저장 중...' : '견적서 저장'}
