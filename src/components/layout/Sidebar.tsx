@@ -19,7 +19,7 @@ const nav = [
 const externalNav = [
   { href: 'https://romentor-premeeting-tool.vercel.app', label: '사전미팅툴', icon: ExternalLink },
 ]
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { collapsed, toggle } = useSidebarCollapsed()
   const { isAdmin } = usePermissions()
@@ -40,10 +40,11 @@ export default function Sidebar() {
             <p className="text-xs text-slate-400 mt-1 whitespace-nowrap">견적 관리 시스템</p>
           </div>
         )}
+        {/* 접기 버튼: 데스크탑 전용 (모바일은 드로어라 불필요) */}
         <button
           onClick={toggle}
           aria-label={collapsed ? '사이드바 펼치기' : '사이드바 접기'}
-          className="flex-shrink-0 p-1.5 rounded-md text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+          className="hidden md:block flex-shrink-0 p-1.5 rounded-md text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
         >
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>
@@ -55,6 +56,7 @@ export default function Sidebar() {
             key={href}
             href={href}
             title={label}
+            onClick={onNavigate}
             className={cn(
               'flex items-center rounded-lg text-sm font-medium transition-colors',
               collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
@@ -77,6 +79,7 @@ export default function Sidebar() {
               target="_blank"
               rel="noopener noreferrer"
               title={label}
+              onClick={onNavigate}
               className={cn(
                 'flex items-center rounded-lg text-sm font-medium transition-colors text-slate-300 hover:bg-slate-800 hover:text-white',
                 collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5'
