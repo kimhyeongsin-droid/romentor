@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Plus, Trash2, CheckCircle, CreditCard, Bell, BellOff, Send, X } from 'lucide-react'
 
 type Member = { name?: string; phone?: string; notify?: boolean }
+type Recip = { name: string; phone: string; include: boolean }
 type Row = {
   id: string
   label: string
@@ -20,10 +21,9 @@ type Row = {
 const PRESETS = ['계약금', '착수금', '중도금', '잔금']
 const fmt = (n: number) => Number(n || 0).toLocaleString('ko-KR')
 
-function recipientsOf(clients: Member[]): { name: string; phone: string }[] {
-  return (clients ?? [])
-    .filter(m => m && m.notify !== false && typeof m.phone === 'string' && m.phone.length > 0)
-    .map(m => ({ name: m.name ?? '', phone: m.phone as string }))
+function firstPhone(members: Member[]): string {
+  const m = (members ?? []).find(x => x && x.notify !== false && typeof x.phone === 'string' && x.phone.length > 0)
+  return m?.phone ?? ''
 }
 
 export default function PaymentSchedule({ projectId }: { projectId: string }) {
@@ -38,6 +38,7 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
   // 발송 모달 상태
   const [sendRow, setSendRow] = useState<Row | null>(null)
   const [draft, setDraft] = useState('')
+  const [recipList, setRecipList] = useState<Recip[]>([])
   const [sending, setSending] = useState(false)
 
   useEffect(() => {
@@ -57,37 +58,47 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
-  const recipients = recipientsOf(clients)
-
-  function buildMessage(row: Row): string {
+  function buildMessage(row: Row, greetName: string): string {
     const due = row.due_date ? new Date(row.due_date + 'T00:00:00').toLocaleDateString('ko-KR') : '미정'
     const amt = fmt(row.amount)
-    const name = recipients.length === 1 ? (recipients[0].name || '고객') : '고객'
-    const contact = recipientsOf(pms)[0]?.phone ?? ''
-    return `[로멘토 인테리어]\n안녕하세요, ${name}님.\n'${projName}' ${row.label} ${amt}원의 입금 예정일은 ${due}입니다.\n입금 부탁드립니다.${contact ? `\n문의: ${contact}` : ''}`
+    const contact = firstPhone(pms)
+    return `[로멘토디자인스튜디오]\n안녕하세요, ${greetName || '고객'}님.\n'${projName}' ${row.label} ${amt}원의 입금 예정일은 ${due}입니다.\n입금 확인 부탁드립니다.${contact ? `\n문의: ${contact}` : ''}`
   }
 
   function openSend(row: Row) {
+    // 수신자 초기값: 프로젝트 고객 목록(알림 ON은 체크, OFF는 해제된 채 노출)
+    const init: Recip[] = (clients ?? [])
+      .filter(m => m && (m.name || m.phone))
+      .map(m => ({ name: m.name ?? '', phone: m.phone ?? '', include: m.notify !== false && !!m.phone }))
+    const list = init.length > 0 ? init : [{ name: '', phone: '', include: true }]
+    const firstName = list.find(r => r.include)?.name ?? list[0]?.name ?? ''
+    setRecipList(list)
+    setDraft(buildMessage(row, firstName))
     setSendRow(row)
-    setDraft(buildMessage(row))
   }
+
+  const chosen = recipList.filter(r => r.include && r.phone.trim())
 
   async function doSend() {
     if (!sendRow) return
-    if (recipients.length === 0) { alert('수신할 고객(알림 ON)이 없습니다. 프로젝트 수정에서 고객 연락처를 확인하세요.'); return }
+    if (chosen.length === 0) { alert('받는 사람을 한 명 이상 선택하고 전화번호를 입력하세요.'); return }
     if (!draft.trim()) { alert('메시지 내용을 입력하세요.'); return }
     setSending(true)
     try {
       const res = await fetch('/api/payment-sms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scheduleId: sendRow.id, message: draft }),
+        body: JSON.stringify({
+          scheduleId: sendRow.id,
+          message: draft,
+          recipients: chosen.map(r => ({ name: r.name, phone: r.phone.trim() })),
+        }),
       })
       const data = await res.json()
       if (data.ok) {
         alert(data.smsConfigured === false
           ? `기록됨 (${data.sent}건). ※ 발송 설정(COOLSMS)이 없어 실제 문자는 나가지 않았습니다.`
-          : `발송 완료 (${data.sent}건)`) 
+          : `발송 완료 (${data.sent}건)`)
         setSendRow(null)
       } else {
         alert('발송 실패: ' + (data.error ?? '알 수 없는 오류'))
@@ -98,6 +109,9 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
       setSending(false)
     }
   }
+
+  const updateRecip = (i: number, patch: Partial<Recip>) =>
+    setRecipList(l => l.map((x, j) => j === i ? { ...x, ...patch } : x))
 
   async function toggleAuto() {
     const next = !autoEnabled
@@ -164,7 +178,7 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
       </div>
 
       <p className="text-xs text-gray-400 mb-3">
-        각 항목의 <span className="text-gray-500 font-medium">문자 발송</span> 버튼으로 고객에게 직접 안내 문자를 보냅니다.
+        각 항목의 <span className="text-gray-500 font-medium">발송</span> 버튼으로 고객에게 직접 안내 문자를 보냅니다.
         (자동 발송은 기본 꺼짐 — 필요 시 <span className="text-gray-500">팀 관리</span>에서 전체 켜기)
       </p>
 
@@ -278,21 +292,37 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
       {/* 발송 미리보기 모달 */}
       {sendRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !sending && setSendRow(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900">문자 발송 — {sendRow.label}</h3>
               <button onClick={() => !sending && setSendRow(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
 
-            <p className="text-xs text-gray-500 mb-1">받는 사람 ({recipients.length}명)</p>
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {recipients.length === 0 ? (
-                <span className="text-xs text-red-500">알림 ON인 고객이 없습니다. 프로젝트 수정에서 고객 연락처를 확인하세요.</span>
-              ) : recipients.map((r, i) => (
-                <span key={i} className="text-xs bg-gray-100 text-gray-600 rounded-full px-2.5 py-1">
-                  {r.name || '고객'} · {r.phone}
-                </span>
+            {/* 받는 사람 (수정 가능) */}
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-gray-500">받는 사람 (체크한 사람에게 발송 · {chosen.length}명)</p>
+              <button
+                onClick={() => setRecipList(l => [...l, { name: '', phone: '', include: true }])}
+                className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-0.5">
+                <Plus size={12} /> 수신자 추가
+              </button>
+            </div>
+            <div className="space-y-1.5 mb-3">
+              {recipList.map((r, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input type="checkbox" checked={r.include} onChange={() => updateRecip(i, { include: !r.include })}
+                    className="flex-shrink-0" />
+                  <input value={r.name} onChange={e => updateRecip(i, { name: e.target.value })} placeholder="이름"
+                    className="w-20 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-400" />
+                  <input value={r.phone} onChange={e => updateRecip(i, { phone: e.target.value })} placeholder="010-0000-0000"
+                    className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-400" />
+                  <button onClick={() => setRecipList(l => l.filter((_, j) => j !== i))}
+                    className="p-1 text-gray-300 hover:text-red-500 flex-shrink-0"><X size={13} /></button>
+                </div>
               ))}
+              {recipList.length === 0 && (
+                <p className="text-xs text-gray-400">수신자를 추가하세요.</p>
+              )}
             </div>
 
             <p className="text-xs text-gray-500 mb-1">메시지 (수정 가능)</p>
@@ -302,14 +332,14 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
               rows={7}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 whitespace-pre-wrap"
             />
-            <p className="text-[11px] text-gray-400 mt-1">{draft.length}자 · 같은 내용이 위 수신자 전원에게 발송됩니다.</p>
+            <p className="text-[11px] text-gray-400 mt-1">{draft.length}자 · 같은 내용이 체크한 수신자 전원에게 발송됩니다.</p>
 
             <div className="flex gap-2 mt-4">
               <button onClick={() => setSendRow(null)} disabled={sending}
                 className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40">
                 취소
               </button>
-              <button onClick={doSend} disabled={sending || recipients.length === 0}
+              <button onClick={doSend} disabled={sending || chosen.length === 0}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 flex items-center justify-center gap-1.5">
                 <Send size={15} /> {sending ? '발송 중...' : '발송하기'}
               </button>

@@ -67,6 +67,12 @@ DROP POLICY IF EXISTS authenticated_all_app_settings ON app_settings;
 CREATE POLICY authenticated_all_app_settings ON app_settings
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- 6) 테이블 권한 부여 (Supabase: authenticated/service_role에 GRANT 필요)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE payment_schedules TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE app_settings TO authenticated;
+GRANT ALL ON TABLE payment_schedules TO service_role;
+GRANT ALL ON TABLE app_settings TO service_role;
+
 -- 검증
 SELECT 'payment_schedules' AS tbl, count(*) FROM payment_schedules
 UNION ALL SELECT 'app_settings', count(*) FROM app_settings;
