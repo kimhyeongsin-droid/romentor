@@ -7,6 +7,7 @@ import { ArrowLeft, FileText, TrendingUp, TrendingDown, AlertTriangle, Plus, Cop
 import { DEFAULT_RATES, QUOTE_STATUS_COLOR } from '@/lib/quoteConstants'
 import { calcQuoteSummary } from '@/lib/quote-calc'
 import ProjectAssignees from '@/app/(main)/_components/ProjectAssignees'
+import PaymentSchedule from '@/app/(main)/_components/PaymentSchedule'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 function ratesFromQuote(q: any) {
@@ -103,6 +104,9 @@ export default function ProjectDetailPage() {
 
       {/* 담당자(편집 권한) 관리 — 관리자 전용 */}
       <ProjectAssignees projectId={id} />
+
+      {/* 입금 일정 · 자동 문자 알림 */}
+      <PaymentSchedule projectId={id} />
 
       {/* 담당자 정보 */}
       <div className="bg-white rounded-xl border border-gray-100 p-4 mb-5 grid grid-cols-3 gap-4">

@@ -52,6 +52,7 @@ export interface Project {
   site_manager_phone?: string
   note?: string
   status: 'draft' | 'active' | 'completed'
+  sms_auto_enabled?: boolean
   created_at: string
   updated_at: string
 }
@@ -128,4 +129,29 @@ export interface SmsAlert {
   recipient_phone: string
   sent_at: string
   status: 'sent' | 'failed'
+}
+
+export interface PaymentSchedule {
+  id: string
+  project_id: string
+  label: string
+  amount: number
+  due_date: string | null
+  status: 'pending' | 'paid'
+  paid_at: string | null
+  memo: string | null
+  reminder_sent_at: string | null
+  last_overdue_sent_at: string | null
+  overdue_count: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AppSettings {
+  id: number
+  sms_auto_enabled: boolean
+  overdue_interval_days: number
+  overdue_max_count: number
+  updated_at: string
 }

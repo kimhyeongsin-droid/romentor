@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Shield, X, Plus } from 'lucide-react'
+import { Shield, X, Plus, Save } from 'lucide-react'
 
 interface Profile { id: string; name: string; email: string; role: string }
 interface Project { id: string; name: string }
@@ -20,6 +20,10 @@ export default function AdminPage() {
   const [selectedProject, setSelectedProject] = useState('')
   const [assignees, setAssignees] = useState<string[]>([])
   const [addPick, setAddPick] = useState('')
+
+  // 자동 문자 발송 전역 설정
+  const [settings, setSettings] = useState<{ sms_auto_enabled: boolean; overdue_interval_days: number; overdue_max_count: number } | null>(null)
+  const [savingSettings, setSavingSettings] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -44,6 +48,29 @@ export default function AdminPage() {
     sb.from('project_assignees').select('user_id').eq('project_id', selectedProject)
       .then(({ data }) => setAssignees(((data ?? []) as any[]).map(r => r.user_id)))
   }, [sb, selectedProject])
+
+  useEffect(() => {
+    if (!isAdmin) return
+    sb.from('app_settings').select('sms_auto_enabled, overdue_interval_days, overdue_max_count').eq('id', 1).single()
+      .then(({ data }) => { if (data) setSettings(data as { sms_auto_enabled: boolean; overdue_interval_days: number; overdue_max_count: number }) })
+  }, [sb, isAdmin])
+
+  const patchSettings = (patch: Partial<NonNullable<typeof settings>>) =>
+    setSettings(s => s ? { ...s, ...patch } : s)
+
+  const saveSettings = async () => {
+    if (!settings) return
+    setSavingSettings(true)
+    const { error } = await sb.from('app_settings').update({
+      sms_auto_enabled: settings.sms_auto_enabled,
+      overdue_interval_days: Math.max(1, Number(settings.overdue_interval_days) || 1),
+      overdue_max_count: Math.max(0, Number(settings.overdue_max_count) || 0),
+      updated_at: new Date().toISOString(),
+    }).eq('id', 1)
+    setSavingSettings(false)
+    if (error) alert('설정 저장 실패: ' + error.message)
+    else alert('저장되었습니다.')
+  }
 
   const toggleRole = async (p: Profile) => {
     const next = p.role === 'admin' ? 'staff' : 'admin'
@@ -181,6 +208,57 @@ export default function AdminPage() {
                   <Plus size={15} /> 추가
                 </button>
               </div>
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* 섹션 C — 자동 문자 발송 설정 */}
+      <section className="bg-white rounded-xl border border-gray-100 overflow-hidden mt-6">
+        <div className="px-5 py-3 border-b border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700">자동 문자 발송 설정</h3>
+          <p className="text-xs text-gray-400 mt-0.5">입금 예정일 자동 알림·지연 알림의 전체 동작을 제어합니다. (프로젝트별 수동 발송은 이 스위치와 무관하게 항상 가능)</p>
+        </div>
+        <div className="p-5 space-y-5">
+          {!settings ? (
+            <p className="text-xs text-gray-400">불러오는 중...</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">전체 자동발송 (마스터 스위치)</p>
+                  <p className="text-xs text-gray-400 mt-0.5">OFF로 두면 모든 프로젝트의 자동 문자가 발송되지 않습니다.</p>
+                </div>
+                <button
+                  onClick={() => patchSettings({ sms_auto_enabled: !settings.sms_auto_enabled })}
+                  className={`relative w-12 h-6 rounded-full transition-colors ${settings.sms_auto_enabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                  aria-label="마스터 스위치"
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${settings.sms_auto_enabled ? 'translate-x-6' : ''}`} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">지연 알림 간격 (일)</label>
+                  <input type="number" min={1} value={settings.overdue_interval_days}
+                    onChange={e => patchSettings({ overdue_interval_days: Number(e.target.value) })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-300" />
+                  <p className="text-xs text-gray-400 mt-1">예정일이 지나면 이 간격마다 반복 발송</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">지연 알림 최대 횟수</label>
+                  <input type="number" min={0} value={settings.overdue_max_count}
+                    onChange={e => patchSettings({ overdue_max_count: Number(e.target.value) })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-300" />
+                  <p className="text-xs text-gray-400 mt-1">이 횟수까지만 지연 문자 발송(안전장치)</p>
+                </div>
+              </div>
+
+              <button onClick={saveSettings} disabled={savingSettings}
+                className="flex items-center gap-1.5 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-40">
+                <Save size={15} /> {savingSettings ? '저장 중...' : '설정 저장'}
+              </button>
             </>
           )}
         </div>
