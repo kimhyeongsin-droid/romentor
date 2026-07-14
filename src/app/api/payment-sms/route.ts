@@ -21,6 +21,13 @@ export async function POST(req: Request) {
   }
 
   const sb = await createClient()
+  const { data: { user } } = await sb.auth.getUser()
+  if (!user) return NextResponse.json({ ok: false, error: '로그인이 필요합니다.' }, { status: 401 })
+  const { data: prof } = await sb.from('profiles').select('role').eq('id', user.id).single()
+  if (prof?.role !== 'admin') {
+    return NextResponse.json({ ok: false, error: '문자 발송은 관리자만 가능합니다.' }, { status: 403 })
+  }
+
   const { data: row } = await sb
     .from('payment_schedules')
     .select('*, projects(clients)')

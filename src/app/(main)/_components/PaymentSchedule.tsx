@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { usePermissions } from '@/hooks/usePermissions'
 import { Plus, Trash2, CheckCircle, CreditCard, Bell, BellOff, Send, X } from 'lucide-react'
 
 type Member = { name?: string; phone?: string; notify?: boolean }
@@ -28,6 +29,7 @@ function firstPhone(members: Member[]): string {
 
 export default function PaymentSchedule({ projectId }: { projectId: string }) {
   const sb = createClient()
+  const { isAdmin } = usePermissions()
   const [rows, setRows] = useState<Row[]>([])
   const [autoEnabled, setAutoEnabled] = useState(false)
   const [projName, setProjName] = useState('')
@@ -179,7 +181,7 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
 
       <p className="text-xs text-gray-400 mb-3">
         각 항목의 <span className="text-gray-500 font-medium">발송</span> 버튼으로 고객에게 직접 안내 문자를 보냅니다.
-        (자동 발송은 기본 꺼짐 — 필요 시 <span className="text-gray-500">팀 관리</span>에서 전체 켜기)
+        (문자 발송은 <span className="text-gray-500">관리자</span>만 가능 · 자동 발송은 기본 꺼짐)
       </p>
 
       {/* 프리셋 추가 */}
@@ -258,13 +260,17 @@ export default function PaymentSchedule({ projectId }: { projectId: string }) {
                       </button>
                     </td>
                     <td className="py-2 text-center">
-                      <button
-                        onClick={() => openSend(row)}
-                        title="고객에게 안내 문자 보내기"
-                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors"
-                      >
-                        <Send size={12} /> 발송
-                      </button>
+                      {isAdmin ? (
+                        <button
+                          onClick={() => openSend(row)}
+                          title="고객에게 안내 문자 보내기"
+                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors"
+                        >
+                          <Send size={12} /> 발송
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-gray-300" title="문자 발송은 관리자만 가능합니다">관리자 전용</span>
+                      )}
                     </td>
                     <td className="py-2 text-right pr-1">
                       <button onClick={() => remove(row.id)}

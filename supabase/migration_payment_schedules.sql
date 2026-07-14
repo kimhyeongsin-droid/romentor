@@ -12,13 +12,13 @@ ALTER TABLE projects ALTER COLUMN sms_auto_enabled SET DEFAULT FALSE;
 -- 2) 전역 설정(app_settings) — 싱글턴(id=1)
 CREATE TABLE IF NOT EXISTS app_settings (
   id INT PRIMARY KEY DEFAULT 1,
-  sms_auto_enabled       BOOLEAN NOT NULL DEFAULT TRUE,   -- 시스템 마스터 스위치(ON: 프로젝트별 스위치가 발송 제어)
+  sms_auto_enabled       BOOLEAN NOT NULL DEFAULT FALSE,  -- 시스템 마스터 스위치(기본 OFF — 관리자가 수동으로 켜야 자동발송)
   overdue_interval_days  INT     NOT NULL DEFAULT 3,      -- 지연 알림 N일 간격
   overdue_max_count      INT     NOT NULL DEFAULT 5,      -- 지연 알림 최대 횟수(안전장치)
   updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT app_settings_singleton CHECK (id = 1)
 );
-INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+INSERT INTO app_settings (id, sms_auto_enabled) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;
 
 -- 3) 입금 일정 테이블
 CREATE TABLE IF NOT EXISTS payment_schedules (
