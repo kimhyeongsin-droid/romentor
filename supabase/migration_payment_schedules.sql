@@ -4,14 +4,15 @@
 -- Supabase SQL Editor에서 실행하세요. (멱등 — 여러 번 실행해도 안전)
 -- ============================================================
 
--- 1) 프로젝트별 자동발송 스위치
+-- 1) 프로젝트별 자동발송 스위치 (기본 OFF — 프로젝트에서 수동으로 켜야 자동 문자 발송)
 ALTER TABLE projects
-  ADD COLUMN IF NOT EXISTS sms_auto_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+  ADD COLUMN IF NOT EXISTS sms_auto_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE projects ALTER COLUMN sms_auto_enabled SET DEFAULT FALSE;
 
 -- 2) 전역 설정(app_settings) — 싱글턴(id=1)
 CREATE TABLE IF NOT EXISTS app_settings (
   id INT PRIMARY KEY DEFAULT 1,
-  sms_auto_enabled       BOOLEAN NOT NULL DEFAULT FALSE,  -- 전체 마스터 스위치(기본 OFF: 수동 발송만)
+  sms_auto_enabled       BOOLEAN NOT NULL DEFAULT TRUE,   -- 시스템 마스터 스위치(ON: 프로젝트별 스위치가 발송 제어)
   overdue_interval_days  INT     NOT NULL DEFAULT 3,      -- 지연 알림 N일 간격
   overdue_max_count      INT     NOT NULL DEFAULT 5,      -- 지연 알림 최대 횟수(안전장치)
   updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
