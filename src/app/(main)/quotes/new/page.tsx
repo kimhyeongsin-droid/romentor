@@ -423,7 +423,10 @@ function NewQuoteForm() {
     alert(`✅ ${p}평 기준으로 수량 자동계산 완료!`)
   }
 
-  const handleSave = async () => {
+  // mode='draft'(임시저장): 수량 0 행까지 그대로 보존해 '작성중' 견적으로 저장 → 상세 화면에서 이어서 작성
+  // mode='final'(견적서 저장): 기존 동작 유지 — 수량 0 행 제외
+  const handleSave = async (mode: 'final' | 'draft' = 'final') => {
+    const isDraft = mode === 'draft'
     if (!projectId) { alert('프로젝트를 선택해주세요'); return }
 
     // 복사 모드에서 원본과 동일한 프로젝트 선택 시 경고
@@ -433,7 +436,7 @@ function NewQuoteForm() {
 
     const workTypeCounters: Record<string, number> = {}
     const insertItems = items
-      .filter(i => i.quantity > 0)
+      .filter(i => isDraft || i.quantity > 0)
       .map(i => {
         const counter = workTypeCounters[i.work_type] ?? 0
         workTypeCounters[i.work_type] = counter + 1
@@ -453,7 +456,9 @@ function NewQuoteForm() {
       })
 
     if (insertItems.length === 0) {
-      alert('수량이 입력된 항목이 없습니다. 최소 1개 이상 입력해주세요.')
+      alert(isDraft
+        ? '저장할 항목이 없습니다.'
+        : '수량이 입력된 항목이 없습니다. 최소 1개 이상 입력해주세요.')
       return
     }
 
@@ -497,6 +502,9 @@ function NewQuoteForm() {
       setLoading(false)
       return
     }
+    if (isDraft) {
+      alert('💾 임시저장됐습니다.\n견적 상세 화면에서 이어서 작성하고 [저장]을 눌러주세요.\n(수량 0 항목은 배포할 때 정리됩니다)')
+    }
     router.push(`/quotes/${(quote as any).id}`)
   }
 
@@ -507,7 +515,12 @@ function NewQuoteForm() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-900">새 견적서 작성</h2>
         <div className="flex gap-3">
-          <button onClick={handleSave} disabled={loading || loadingTemplate || !projectId}
+          <button onClick={() => handleSave('draft')} disabled={loading || loadingTemplate || !projectId}
+            title="입력 중인 내용을 그대로(수량 0 항목 포함) 작성중 견적으로 저장합니다"
+            className="bg-white text-blue-700 border border-blue-300 px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50">
+            {loading ? '저장중...' : '임시저장'}
+          </button>
+          <button onClick={() => handleSave('final')} disabled={loading || loadingTemplate || !projectId}
             className="bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
             {loading ? '저장중...' : '견적서 저장'}
           </button>
@@ -709,7 +722,12 @@ function NewQuoteForm() {
 
       {/* 저장 버튼 */}
       <div className="flex gap-3">
-        <button onClick={handleSave} disabled={loading || loadingTemplate || !projectId}
+        <button onClick={() => handleSave('draft')} disabled={loading || loadingTemplate || !projectId}
+          title="입력 중인 내용을 그대로(수량 0 항목 포함) 작성중 견적으로 저장합니다"
+          className="bg-white text-blue-700 border border-blue-300 px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-50">
+          {loading ? '저장중...' : '임시저장'}
+        </button>
+        <button onClick={() => handleSave('final')} disabled={loading || loadingTemplate || !projectId}
           className="bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
           {loading ? '저장중...' : '견적서 저장'}
         </button>

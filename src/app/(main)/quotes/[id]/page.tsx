@@ -722,8 +722,24 @@ export default function QuoteDetailPage() {
   }
 
   const handleDeploy = async () => {
-    if (!confirm('배포하면 이 견적서는 수정이 불가능합니다. 배포하시겠습니까?')) return
-    await createClient().from('quotes').update({ status: '배포' }).eq('id', id)
+    const sb = createClient()
+    // 임시저장으로 남은 수량 0 항목은 고객용 견적서에 찍히지 않도록 배포 시 정리 (DB 저장값 기준)
+    const { data: zeroRows, error: zeroErr } = await sb
+      .from('quote_items').select('id').eq('quote_id', id).eq('quantity', 0)
+    if (zeroErr) { alert('❌ 항목 확인 실패: ' + zeroErr.message); return }
+    const zeroIds = (zeroRows ?? []).map((r: { id: string }) => r.id)
+
+    const msg = zeroIds.length > 0
+      ? `수량 0인 항목 ${zeroIds.length}개는 삭제한 뒤 배포합니다.\n배포하면 이 견적서는 수정이 불가능합니다. 배포하시겠습니까?`
+      : '배포하면 이 견적서는 수정이 불가능합니다. 배포하시겠습니까?'
+    if (!confirm(msg)) return
+
+    if (zeroIds.length > 0) {
+      const { error: delErr } = await sb.from('quote_items').delete().in('id', zeroIds)
+      if (delErr) { alert('❌ 수량 0 항목 삭제 실패: ' + delErr.message); return }
+      setItems(prev => prev.filter(i => !zeroIds.includes(i.id)))
+    }
+    await sb.from('quotes').update({ status: '배포' }).eq('id', id)
     setQuote((prev: any) => ({ ...prev, status: '배포' }))
   }
 
